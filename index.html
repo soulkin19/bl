@@ -3,55 +3,88 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>1-15 Card Duel</title>
+    <title>Card Duel - Lobby System</title>
     <style>
-        body { font-family: sans-serif; background: #f0f2f5; display: flex; justify-content: center; padding: 20px; }
-        #app { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); width: 100%; max-width: 500px; text-align: center; }
-        .hidden { display: none; }
-        .card-container { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 20px 0; }
-        .card { padding: 15px 10px; width: 40px; border: 2px solid #333; border-radius: 8px; cursor: pointer; font-weight: bold; background: white; transition: 0.2s; }
-        .card:hover { background: #eee; transform: translateY(-3px); }
-        .card.disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-        #field { font-size: 3rem; margin: 20px 0; min-height: 80px; color: #007bff; font-weight: bold; }
-        .status-bar { padding: 10px; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px; font-size: 0.9rem; }
-        button.main-btn { padding: 10px 20px; font-size: 1rem; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 5px; margin: 5px; }
-        button.pass-btn { background: #6c757d; }
+        :root { --primary: #4a90e2; --secondary: #f39c12; --bg: #f4f7f9; }
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; background: var(--bg); margin: 0; display: flex; justify-content: center; }
+        #app { width: 100%; max-width: 800px; padding: 20px; }
+        .hidden { display: none !important; }
+
+        /* ロビー UI */
+        .lobby-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .room-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; }
+        .room-card { background: white; padding: 15px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); border-top: 5px solid var(--primary); cursor: pointer; transition: 0.2s; }
+        .room-card:hover { transform: translateY(-5px); }
+        .room-card.playing { border-top-color: #95a5a6; opacity: 0.7; pointer-events: none; }
+        .room-card h3 { margin: 0 0 10px 0; font-size: 1.1rem; }
+
+        /* 待機室 UI */
+        .waiting-room { background: white; padding: 30px; border-radius: 15px; text-align: center; }
+        .player-slots { display: flex; justify-content: space-around; margin: 30px 0; }
+        .player-slot { padding: 20px; border: 2px dashed #ccc; border-radius: 10px; width: 40%; }
+        .player-slot.active { border-style: solid; border-color: var(--primary); background: #eef6ff; }
+
+        /* ゲーム UI */
+        #game { text-align: center; }
+        #field { font-size: 4rem; margin: 20px 0; color: var(--primary); font-weight: bold; background: #fff; padding: 20px; border-radius: 50%; width: 100px; height: 100px; line-height: 100px; margin: 20px auto; box-shadow: inset 0 0 10px rgba(0,0,0,0.1); }
+        .hand { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 30px; }
+        .card { width: 45px; height: 65px; line-height: 65px; border: 2px solid #333; border-radius: 5px; background: white; font-weight: bold; cursor: pointer; font-size: 1.2rem; }
+        .card.disabled { opacity: 0.3; cursor: not-allowed; }
+        .card:not(.disabled):hover { background: #ffeaa7; transform: translateY(-5px); }
+
+        button { padding: 10px 20px; border-radius: 5px; border: none; background: var(--primary); color: white; cursor: pointer; font-size: 1rem; }
+        button:disabled { background: #ccc; }
+        .btn-random { background: var(--secondary); }
     </style>
 </head>
 <body>
 
 <div id="app">
-    <h1>1-15 Card Duel</h1>
-
-    <!-- ロビー画面 -->
-    <div id="lobby">
-        <button class="main-btn" onclick="startMatch(true)">ランダムマッチ</button>
-        <div style="margin: 10px;">または</div>
-        <input type="text" id="roomInput" placeholder="ルームIDを入力">
-        <button class="main-btn" onclick="startMatch(false)">ルーム参戦/作成</button>
+    <!-- 1. ロビー画面 -->
+    <div id="view-lobby">
+        <div class="lobby-header">
+            <h2>対戦ロビー</h2>
+            <div>
+                <button class="btn-random" onclick="joinRandom()">ランダムマッチ</button>
+                <button onclick="createRoom()">＋ ルーム作成</button>
+            </div>
+        </div>
+        <div id="room-list" class="room-grid">
+            <!-- ルームカードがここに動的に追加される -->
+        </div>
     </div>
 
-    <!-- ゲーム画面 -->
-    <div id="game" class="hidden">
-        <div class="status-bar">
-            ID: <span id="displayRoomId">---</span> | 
-            <span id="turnInfo">接続中...</span>
+    <!-- 2. 待機室画面 -->
+    <div id="view-waiting" class="hidden">
+        <div class="waiting-room">
+            <h2 id="wait-room-title">ルーム待機中</h2>
+            <div class="player-slots">
+                <div id="slot-p1" class="player-slot active">ホスト: P1</div>
+                <div id="slot-p2" class="player-slot">ゲスト: 待機中...</div>
+            </div>
+            <button id="start-btn" class="hidden" onclick="startGame()">対戦開始！</button>
+            <p id="wait-msg">相手が参加すると開始できます</p>
+            <button style="background:#e74c3c; margin-top:20px;" onclick="location.reload()">退出する</button>
         </div>
-        <div id="opponent-status">相手の手札: <span id="oppCount">13</span>枚</div>
-        
-        <div id="field">0</div>
-        <p>場のカードより大きい数字を出してください</p>
+    </div>
 
-        <div id="my-hand" class="card-container"></div>
-        
-        <button id="passBtn" class="main-btn pass-btn" onclick="handlePass()">パス（場をリセット）</button>
+    <!-- 3. ゲーム画面 -->
+    <div id="view-game" class="hidden">
+        <div style="display:flex; justify-content: space-between; align-items: center;">
+            <div id="turn-display" style="font-weight:bold; font-size:1.2rem;"></div>
+            <div>相手の手札: <span id="opp-count">0</span>枚</div>
+        </div>
+        <div id="field">0</div>
+        <div id="my-hand" class="hand"></div>
+        <div style="margin-top:20px;">
+            <button id="pass-btn" style="background:#95a5a6;" onclick="handlePass()">パス（場をリセット）</button>
+        </div>
     </div>
 </div>
 
-<!-- Firebase SDK -->
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-    import { getDatabase, ref, set, update, onValue, push, query, orderByChild, equalTo, get } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+    import { getDatabase, ref, set, update, onValue, push, get, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
     const firebaseConfig = {
         apiKey: "AIzaSyCwhHspaG94goiCIjVj3h-Un5pBK3JTjMU",
@@ -67,127 +100,178 @@
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
 
-    let myId = null; // "p1" or "p2"
+    let myRole = null; // 'p1' or 'p2'
     let currentRoomId = null;
-    let myHand = [];
+    let isRandomMatch = false;
 
-    // --- マッチングロジック ---
-    window.startMatch = async (isRandom) => {
-        let roomId = document.getElementById('roomInput').value;
-        const roomsRef = ref(db, 'rooms');
+    // --- 画面切り替え ---
+    function showView(viewId) {
+        ['view-lobby', 'view-waiting', 'view-game'].forEach(id => {
+            document.getElementById(id).classList.toggle('hidden', id !== viewId);
+        });
+    }
 
-        if (isRandom) {
-            const waitingQuery = query(roomsRef, orderByChild('state'), equalTo('waiting'));
-            const snapshot = await get(waitingQuery);
-            if (snapshot.exists()) {
-                roomId = Object.keys(snapshot.val())[0];
-            } else {
-                roomId = "room_" + Math.random().toString(36).substring(7);
-            }
-        }
+    // --- ロビー機能 ---
+    const roomsRef = ref(db, 'rooms');
+    onValue(roomsRef, (snapshot) => {
+        const rooms = snapshot.val();
+        const listEl = document.getElementById('room-list');
+        listEl.innerHTML = '';
+        if (!rooms) return;
 
-        if (!roomId) return alert("ルームIDを入力してください");
-        setupRoom(roomId);
+        Object.keys(rooms).forEach(id => {
+            const room = rooms[id];
+            if (room.state === 'finished') return;
+
+            const card = document.createElement('div');
+            card.className = `room-card ${room.state === 'playing' ? 'playing' : ''}`;
+            card.innerHTML = `
+                <h3>部屋: ${id.substring(1, 6)}</h3>
+                <p>状態: ${room.state === 'playing' ? '対戦中' : '参加可能'}</p>
+                <small>プレイヤー: ${room.p2 ? '2/2' : '1/2'}</small>
+            `;
+            if (room.state !== 'playing') card.onclick = () => joinRoom(id);
+            listEl.appendChild(card);
+        });
+    });
+
+    // --- ルーム作成・参加 ---
+    window.createRoom = async () => {
+        const newRoomRef = push(ref(db, 'rooms'));
+        currentRoomId = newRoomRef.key;
+        myRole = 'p1';
+        isRandomMatch = false;
+
+        await set(newRoomRef, {
+            state: 'waiting',
+            p1: { active: true },
+            createdAt: serverTimestamp()
+        });
+        showView('view-waiting');
+        listenRoom();
     };
 
-    async function setupRoom(roomId) {
+    window.joinRoom = async (roomId) => {
         currentRoomId = roomId;
-        const roomRef = ref(db, `rooms/${roomId}`);
-        const snapshot = await get(roomRef);
+        myRole = 'p2';
+        await update(ref(db, `rooms/${roomId}`), {
+            p2: { active: true },
+            state: 'ready'
+        });
+        showView('view-waiting');
+        listenRoom();
+    };
 
-        if (!snapshot.exists()) {
-            // P1として部屋作成
-            myId = "p1";
-            const deck = Array.from({length: 15}, (_, i) => [i+1, i+1]).flat().sort(() => Math.random() - 0.5);
-            myHand = deck.slice(0, 13);
-            const p2Hand = deck.slice(13, 26); // 残り4枚は deck.slice(26, 30) で未使用
+    window.joinRandom = async () => {
+        const snapshot = await get(ref(db, 'rooms'));
+        const rooms = snapshot.val();
+        let targetId = null;
 
-            await set(roomRef, {
-                state: "waiting",
-                lastCard: 0,
-                turn: Math.random() > 0.5 ? "p1" : "p2",
-                p1: { hand: myHand, count: 13 },
-                p2: { hand: p2Hand, count: 13 },
-                lastAction: "start"
-            });
-        } else {
-            // P2として参加
-            myId = "p2";
-            await update(roomRef, { state: "playing" });
+        if (rooms) {
+            targetId = Object.keys(rooms).find(id => rooms[id].state === 'waiting');
         }
 
-        document.getElementById('lobby').classList.add('hidden');
-        document.getElementById('game').classList.remove('hidden');
-        document.getElementById('displayRoomId').innerText = roomId;
-        listenRoom();
-    }
+        if (targetId) {
+            isRandomMatch = true;
+            joinRoom(targetId);
+        } else {
+            // 待機部屋がなければ作成
+            createRoom();
+            isRandomMatch = true; 
+        }
+    };
 
-    // --- ゲーム監視 ---
-    function listenRoom() {
-        const roomRef = ref(db, `rooms/${currentRoomId}`);
-        onValue(roomRef, (snapshot) => {
-            const data = snapshot.val();
-            if (!data) return;
+    // --- ゲーム開始（ホストのみ） ---
+    window.startGame = async () => {
+        const deck = Array.from({length: 15}, (_, i) => [i+1, i+1]).flat().sort(() => Math.random() - 0.5);
+        const p1Hand = deck.slice(0, 13);
+        const p2Hand = deck.slice(13, 26);
 
-            myHand = data[myId].hand || [];
-            const isMyTurn = data.turn === myId;
-            const lastCard = data.lastCard;
-
-            // UI更新
-            document.getElementById('field').innerText = lastCard === 0 ? "RESET" : lastCard;
-            document.getElementById('oppCount').innerText = data[myId === "p1" ? "p2" : "p1"].count;
-            document.getElementById('turnInfo').innerText = isMyTurn ? "あなたの番です" : "相手の番です...";
-            document.getElementById('turnInfo').style.color = isMyTurn ? "#28a745" : "#dc3545";
-
-            renderHand(isMyTurn, lastCard);
-
-            // 勝敗判定
-            if (data.p1.count === 0) endGame(data.p1.count === 0 && myId === "p1");
-            if (data.p2.count === 0) endGame(data.p2.count === 0 && myId === "p2");
-        });
-    }
-
-    function renderHand(isMyTurn, lastCard) {
-        const container = document.getElementById('my-hand');
-        container.innerHTML = '';
-        myHand.sort((a, b) => a - b).forEach((num, index) => {
-            const card = document.createElement('div');
-            card.className = `card ${(!isMyTurn || num <= lastCard) ? 'disabled' : ''}`;
-            card.innerText = num;
-            card.onclick = () => {
-                if (isMyTurn && num > lastCard) handlePlay(num);
-            };
-            container.appendChild(card);
-        });
-    }
-
-    // --- アクション ---
-    async function handlePlay(num) {
-        const roomRef = ref(db, `rooms/${currentRoomId}`);
-        const newHand = myHand.filter((c, i) => i !== myHand.indexOf(num));
-        
-        await update(roomRef, {
-            lastCard: num,
-            turn: myId === "p1" ? "p2" : "p1",
-            [`${myId}/hand`]: newHand,
-            [`${myId}/count`]: newHand.length
-        });
-    }
-
-    async function handlePass() {
-        const roomRef = ref(db, `rooms/${currentRoomId}`);
-        // パス時は場を0にリセットし、相手のターンへ
-        await update(roomRef, {
+        await update(ref(db, `rooms/${currentRoomId}`), {
+            state: 'playing',
+            p1: { hand: p1Hand, count: 13 },
+            p2: { hand: p2Hand, count: 13 },
             lastCard: 0,
-            turn: myId === "p1" ? "p2" : "p1"
+            turn: Math.random() > 0.5 ? 'p1' : 'p2'
+        });
+    };
+
+    // --- メイン監視ロジック ---
+    function listenRoom() {
+        onValue(ref(db, `rooms/${currentRoomId}`), (snapshot) => {
+            const room = snapshot.val();
+            if (!room) return;
+
+            // 待機室のUI更新
+            if (room.p2) {
+                document.getElementById('slot-p2').classList.add('active');
+                document.getElementById('slot-p2').innerText = 'ゲスト: P2 (準備完了)';
+                if (myRole === 'p1') {
+                    document.getElementById('start-btn').classList.remove('hidden');
+                    document.getElementById('wait-msg').classList.add('hidden');
+                    // ランダムマッチなら即開始
+                    if (isRandomMatch && room.state === 'ready') startGame();
+                }
+            }
+
+            // ゲーム画面への遷移
+            if (room.state === 'playing') {
+                showView('view-game');
+                renderGame(room);
+            }
         });
     }
 
-    function endGame(isWin) {
-        alert(isWin ? "おめでとう！あなたの勝利です！" : "残念... 相手が先に上がりました。");
-        location.reload();
-    }
-</script>
+    function renderGame(room) {
+        const isMyTurn = room.turn === myRole;
+        const myData = room[myRole];
+        const oppRole = myRole === 'p1' ? 'p2' : 'p1';
+        
+        document.getElementById('turn-display').innerText = isMyTurn ? "あなたのターン" : "相手のターン";
+        document.getElementById('turn-display').style.color = isMyTurn ? "#27ae60" : "#7f8c8d";
+        document.getElementById('field').innerText = room.lastCard || 'R';
+        document.getElementById('opp-count').innerText = room[oppRole].count;
 
+        const handEl = document.getElementById('my-hand');
+        handEl.innerHTML = '';
+        myData.hand.sort((a,b)=>a-b).forEach(num => {
+            const card = document.createElement('div');
+            const canPlay = isMyTurn && num > room.lastCard;
+            card.className = `card ${canPlay ? '' : 'disabled'}`;
+            card.innerText = num;
+            if (canPlay) card.onclick = () => playCard(num, myData.hand);
+            handEl.appendChild(card);
+        });
+
+        if (myData.count === 0) {
+            alert("あなたの勝利です！");
+            update(ref(db, `rooms/${currentRoomId}`), { state: 'finished' });
+            location.reload();
+        } else if (room[oppRole].count === 0) {
+            alert("相手の勝利です...");
+            location.reload();
+        }
+    }
+
+    async function playCard(num, currentHand) {
+        const newHand = currentHand.filter((c, i) => i !== currentHand.indexOf(num));
+        await update(ref(db, `rooms/${currentRoomId}`), {
+            lastCard: num,
+            turn: myRole === 'p1' ? 'p2' : 'p1',
+            [`${myRole}/hand`]: newHand,
+            [`${myRole}/count`]: newHand.length
+        });
+    }
+
+    window.handlePass = async () => {
+        const roomSnapshot = await get(ref(db, `rooms/${currentRoomId}`));
+        if (roomSnapshot.val().turn !== myRole) return;
+
+        await update(ref(db, `rooms/${currentRoomId}`), {
+            lastCard: 0,
+            turn: myRole === 'p1' ? 'p2' : 'p1'
+        });
+    };
+</script>
 </body>
 </html>
