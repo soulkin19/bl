@@ -1,240 +1,302 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<title>AChex 野球ルーム戦デモ</title>
-<style>
-    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #111; color: #0f0; }
-    .tab { display: none; }
-    .active { display: block; }
-    button, input { padding: 8px 12px; margin: 5px; }
-    .room-list { max-height: 400px; overflow-y: auto; background: #222; padding: 10px; }
-    .room-item { background: #333; margin: 5px 0; padding: 10px; border-radius: 5px; }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>数字出しカードゲーム</title>
+  <script src="https://www.gstatic.com/firebasejs/11.0.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/11.0.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/11.0.1/firebase-database-compat.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #1a1a2e; color: #eee; }
+    .container { max-width: 800px; margin: 0 auto; }
+    button { padding: 12px 20px; margin: 5px; font-size: 16px; border: none; border-radius: 8px; cursor: pointer; }
+    .card { display: inline-block; width: 60px; height: 80px; background: white; color: black; 
+             text-align: center; line-height: 80px; font-size: 28px; margin: 5px; border-radius: 8px; }
+    .log { height: 200px; overflow-y: auto; background: #16213e; padding: 10px; border-radius: 8px; }
+  </style>
 </head>
 <body>
-<h1>⚾ AChex 野球ルーム戦</h1>
-
-<!-- 設定画面（ルームに入る前） -->
-<div id="setup-screen">
-    <h2>自分の投球設定（ルーム参加前に決定）</h2>
+  <div class="container">
+    <h1>数字出しカードゲーム</h1>
     
-    <label>変化量（0〜100）: 
-        <input type="range" id="breakAmount" min="0" max="100" value="50">
-        <span id="breakValue">50</span>
-    </label><br><br>
-    
-    <h3>変化球 4球種（ストレート以外）</h3>
-    <div>
-        <label><input type="checkbox" class="pitchType" value="スライダー" checked> スライダー</label><br>
-        <label><input type="checkbox" class="pitchType" value="カーブ" checked> カーブ</label><br>
-        <label><input type="checkbox" class="pitchType" value="フォーク" checked> フォーク</label><br>
-        <label><input type="checkbox" class="pitchType" value="シンカー"> シンカー</label><br>
-        <label><input type="checkbox" class="pitchType" value="カットボール"> カットボール</label>
+    <!-- ログイン画面 -->
+    <div id="loginScreen">
+      <h2>プレイヤー登録</h2>
+      <input type="text" id="playerName" placeholder="表示名を入力" maxlength="12">
+      <button onclick="setNameAndLogin()">決定して開始</button>
     </div>
 
-    <button onclick="saveSettingsAndShowLobby()">設定完了 → ロビーへ</button>
-</div>
+    <!-- メイン画面 -->
+    <div id="mainScreen" style="display:none;">
+      <div>プレイヤー: <span id="displayName"></span> | 勝: <span id="wins">0</span> 敗: <span id="losses">0</span></div>
+      
+      <button onclick="createRoom()">部屋を作成</button>
+      <button onclick="startRandomMatch()">ランダムマッチ</button>
+      <button onclick="logout()">ログアウト</button>
 
-<!-- ロビー画面 -->
-<div id="lobby-screen" class="tab">
-    <h2>ロビー</h2>
-    <button onclick="createRoom()">新しいルームを作成</button>
-    <button onclick="refreshRoomList()">一覧更新</button>
-    
-    <h3>公開ルーム一覧</h3>
-    <div id="roomList" class="room-list"></div>
-    
-    <div id="currentRoom" style="margin-top:20px; display:none;">
-        <h3>現在のルーム: <span id="roomIdDisplay"></span></h3>
-        <button onclick="startMatch()">試合開始（ホストのみ）</button>
-        <button onclick="leaveRoom()">ルーム退出</button>
+      <div id="roomInfo" style="margin:20px 0; padding:15px; background:#16213e; border-radius:8px;"></div>
+
+      <!-- ゲーム画面 -->
+      <div id="gameScreen" style="display:none;">
+        <h2>対戦中 - <span id="opponentName"></span></h2>
+        <p>場: <span id="lastCard" style="font-size:32px; font-weight:bold;">0</span></p>
+        <p>ターン: <span id="currentTurn"></span></p>
+        
+        <div id="myHand"></div>
+        
+        <button onclick="passTurn()" style="background:#e74c3c;">パス</button>
+        
+        <div class="log" id="gameLog"></div>
+      </div>
     </div>
-</div>
+  </div>
 
-<!-- ゲーム画面（簡易） -->
-<div id="game-screen" class="tab">
-    <h2>試合中</h2>
-    <p>ルームID: <span id="inGameRoomId"></span></p>
-    <div id="gameLog"></div>
-    <button onclick="sendPitch()">投球する</button>
-    <button onclick="leaveRoom()">退出</button>
-</div>
-
-<script>
-// ====================== AChex 接続 ======================
-const instanceName = "baseball-demo-" + Math.floor(Math.random()*10000); // 好きなインスタンス名
-const wsUrl = `wss://cloud.achex.ca/${instanceName}`;
-
-let ws;
-let mySID = null;
-let myUsername = "Player" + Math.floor(Math.random()*9999);
-let currentRoomId = null;
-let isHost = false;
-
-let playerSettings = {};
-
-// WebSocket接続
-function connectWebSocket() {
-    ws = new WebSocket(wsUrl);
-    
-    ws.onopen = () => {
-        log("AChexに接続しました");
-        // 認証（簡易）
-        ws.send(JSON.stringify({ setID: myUsername, passwd: "none" }));
+  <script>
+    // ====================== Firebase設定 ======================
+    const firebaseConfig = {
+      apiKey: "AIzaSyCwhHspaG94goiCIjVj3h-Un5pBK3JTjMU",
+      authDomain: "soulkin-aa3b7.firebaseapp.com",
+      databaseURL: "https://soulkin-aa3b7-default-rtdb.firebaseio.com",
+      projectId: "soulkin-aa3b7",
+      storageBucket: "soulkin-aa3b7.firebasestorage.app",
+      messagingSenderId: "358331064206",
+      appId: "1:358331064206:web:d7760ea0919259418a4edf"
     };
-    
-    ws.onmessage = (evt) => {
-        const msg = JSON.parse(evt.data);
-        
-        if (msg.SID) mySID = msg.SID;
-        if (msg.auth === "ok") log("認証完了: " + myUsername);
-        
-        handleMessage(msg);
-    };
-    
-    ws.onerror = (e) => log("エラー: " + e);
-    ws.onclose = () => log("切断されました");
-}
 
-// メッセージ処理
-function handleMessage(msg) {
-    if (msg.type === "new_room") {
-        refreshRoomList();
-    } else if (msg.type === "room_list") {
-        renderRoomList(msg.rooms || []);
-    } else if (msg.cmd === "pitch") {
-        log(`相手が投球！ 球種: ${msg.pitchType} 変化量: ${msg.break}`);
-    }
-}
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.database();
 
-// ====================== 設定 ======================
-function saveSettingsAndShowLobby() {
-    const breakAmount = document.getElementById("breakAmount").value;
-    const selectedPitches = Array.from(document.querySelectorAll('.pitchType:checked'))
-                               .map(cb => cb.value);
-    
-    if (selectedPitches.length === 0) {
-        alert("少なくとも1つ変化球を選択してください");
+    let currentUser = null;
+    let currentRoomId = null;
+    let myPlayerKey = null; // "player1" or "player2"
+
+    // ====================== ログイン ======================
+    async function setNameAndLogin() {
+      const nameInput = document.getElementById("playerName").value.trim();
+      if (!nameInput) {
+        alert("名前を入力してください");
         return;
+      }
+
+      try {
+        let userCredential = await auth.signInAnonymously();
+        currentUser = userCredential.user;
+
+        // ユーザー情報を保存
+        await db.ref('users/' + currentUser.uid).update({
+          displayName: nameInput,
+          wins: 0,
+          losses: 0,
+          lastLogin: Date.now()
+        });
+
+        document.getElementById("loginScreen").style.display = "none";
+        document.getElementById("mainScreen").style.display = "block";
+        document.getElementById("displayName").textContent = nameInput;
+        
+        loadStats();
+      } catch (e) {
+        console.error(e);
+        alert("ログインに失敗しました");
+      }
     }
-    
-    playerSettings = {
-        breakAmount: parseInt(breakAmount),
-        pitchTypes: selectedPitches
-    };
-    
-    document.getElementById("setup-screen").style.display = "none";
-    document.getElementById("lobby-screen").classList.add("active");
-    
-    connectWebSocket();
-}
 
-// ====================== ルーム機能 ======================
-function createRoom() {
-    currentRoomId = "room_" + Math.random().toString(36).substr(2, 8);
-    isHost = true;
-    
-    ws.send(JSON.stringify({
-        cmd: "register_broadcast",
-        bid: currentRoomId
-    }));
-    
-    // ロビーに通知
-    ws.send(JSON.stringify({
-        to: "lobby",
-        type: "new_room",
-        roomId: currentRoomId,
-        host: myUsername,
-        players: 1,
-        maxPlayers: 2,
-        settings: playerSettings
-    }));
-    
-    showCurrentRoom();
-}
-
-function refreshRoomList() {
-    // 簡易実装：実際はサーバーから取得するか、broadcastで管理
-    ws.send(JSON.stringify({ to: "lobby", type: "request_list" }));
-    log("ルーム一覧を更新中...");
-}
-
-function renderRoomList(rooms) {
-    const div = document.getElementById("roomList");
-    div.innerHTML = "";
-    
-    // ダミーデータ（実際は受信したもので描画）
-    if (rooms.length === 0) {
-        div.innerHTML = "<p>現在公開ルームはありません</p>";
+    async function loadStats() {
+      const snap = await db.ref('users/' + currentUser.uid).once('value');
+      const data = snap.val();
+      if (data) {
+        document.getElementById("wins").textContent = data.wins || 0;
+        document.getElementById("losses").textContent = data.losses || 0;
+      }
     }
-}
 
-function joinRoom(roomId) {
-    currentRoomId = roomId;
-    isHost = false;
-    
-    ws.send(JSON.stringify({
-        cmd: "register_broadcast",
-        bid: currentRoomId
-    }));
-    
-    showCurrentRoom();
-}
-
-function showCurrentRoom() {
-    document.getElementById("roomIdDisplay").textContent = currentRoomId;
-    document.getElementById("currentRoom").style.display = "block";
-}
-
-// ====================== 試合 ======================
-function startMatch() {
-    if (!isHost) return alert("ホストのみ開始できます");
-    
-    document.getElementById("lobby-screen").classList.remove("active");
-    document.getElementById("game-screen").classList.add("active");
-    document.getElementById("inGameRoomId").textContent = currentRoomId;
-    
-    log("試合を開始しました！");
-}
-
-function sendPitch() {
-    if (!currentRoomId) return;
-    
-    const randomType = playerSettings.pitchTypes[Math.floor(Math.random() * playerSettings.pitchTypes.length)];
-    
-    ws.send(JSON.stringify({
-        to: currentRoomId,           // ルーム内のみに送信
-        cmd: "pitch",
-        pitchType: randomType,
-        break: playerSettings.breakAmount
-    }));
-    
-    log(`あなたは ${randomType} を投げました！ (変化量: ${playerSettings.breakAmount})`);
-}
-
-function leaveRoom() {
-    currentRoomId = null;
-    document.getElementById("game-screen").classList.remove("active");
-    document.getElementById("lobby-screen").classList.add("active");
-    document.getElementById("currentRoom").style.display = "none";
-}
-
-// ログ出力
-function log(text) {
-    console.log(text);
-    const logDiv = document.getElementById("gameLog") || document.createElement("div");
-    if (document.getElementById("gameLog")) {
-        document.getElementById("gameLog").innerHTML += text + "<br>";
+    function logout() {
+      auth.signOut();
+      location.reload();
     }
-}
 
-// 初期化
-window.onload = () => {
-    document.getElementById("breakAmount").oninput = function() {
-        document.getElementById("breakValue").textContent = this.value;
-    };
-};
-</script>
+    // ====================== 部屋作成 ======================
+    async function createRoom() {
+      const roomId = "room_" + Date.now().toString(36);
+      myPlayerKey = "player1";
+
+      const deck = createDeck();
+      const p1Hand = deck.slice(0, 13);
+      const p2Hand = deck.slice(13, 26);
+
+      const roomData = {
+        status: "waiting",
+        createdAt: Date.now(),
+        lastCard: 0,
+        currentTurn: "player1",
+        players: {
+          player1: {
+            uid: currentUser.uid,
+            displayName: document.getElementById("displayName").textContent,
+            hand: p1Hand.sort((a,b)=>a-b)
+          }
+        }
+      };
+
+      await db.ref('rooms/' + roomId).set(roomData);
+      joinRoom(roomId);
+    }
+
+    // ====================== ランダムマッチ ======================
+    async function startRandomMatch() {
+      const queueRef = db.ref('matchQueue');
+      
+      // 簡易マッチング（既存の待機者を検索）
+      const snap = await queueRef.orderByChild('timestamp').limitToFirst(5).once('value');
+      let matched = false;
+
+      snap.forEach(child => {
+        const data = child.val();
+        if (data.uid !== currentUser.uid) {
+          // マッチ成立
+          const roomId = child.key.replace("queue_", "");
+          joinExistingRoom(roomId, data.roomId || roomId);
+          matched = true;
+          queueRef.child(child.key).remove();
+          return true;
+        }
+      });
+
+      if (!matched) {
+        // 待機キューに入る
+        const tempRoomId = "room_" + Date.now().toString(36);
+        await queueRef.child("queue_" + currentUser.uid).set({
+          uid: currentUser.uid,
+          timestamp: Date.now(),
+          roomId: tempRoomId
+        });
+        alert("対戦相手を探しています... 少しお待ちください");
+        joinRoom(tempRoomId); // 自分はplayer1として待機
+      }
+    }
+
+    // ====================== 部屋参加 ======================
+    function joinRoom(roomId) {
+      currentRoomId = roomId;
+      document.getElementById("roomInfo").innerHTML = `<p>部屋ID: ${roomId} (待機中)</p>`;
+      
+      const roomRef = db.ref('rooms/' + roomId);
+      
+      roomRef.on('value', (snapshot) => {
+        const room = snapshot.val();
+        if (!room) return;
+
+        if (room.status === "playing" && !document.getElementById("gameScreen").style.display.includes("block")) {
+          startGameUI(room);
+        }
+
+        if (room.winner) {
+          endGame(room.winner);
+        }
+      });
+    }
+
+    async function joinExistingRoom(queueKey, roomId) {
+      // ここは簡略化。実際はより堅牢なマッチング処理が必要
+      currentRoomId = roomId;
+      myPlayerKey = "player2";
+      
+      const roomRef = db.ref('rooms/' + roomId);
+      const snap = await roomRef.once('value');
+      let room = snap.val();
+
+      if (room && room.players && !room.players.player2) {
+        await roomRef.child('players/player2').set({
+          uid: currentUser.uid,
+          displayName: document.getElementById("displayName").textContent,
+          hand: [] // 後で同期
+        });
+        await roomRef.update({ status: "playing" });
+        joinRoom(roomId);
+      }
+    }
+
+    // ====================== ゲームロジック ======================
+    function createDeck() {
+      let deck = [];
+      for (let i = 1; i <= 15; i++) deck.push(i, i);
+      deck.sort(() => Math.random() - 0.5);
+      return deck;
+    }
+
+    function startGameUI(room) {
+      document.getElementById("roomInfo").style.display = "none";
+      document.getElementById("gameScreen").style.display = "block";
+      
+      document.getElementById("opponentName").textContent = 
+        myPlayerKey === "player1" ? room.players.player2.displayName : room.players.player1.displayName;
+      
+      renderHand(room);
+      updateGameUI(room);
+    }
+
+    function renderHand(room) {
+      const hand = room.players[myPlayerKey].hand || [];
+      let html = "";
+      hand.forEach(card => {
+        html += `<button class="card" onclick="playCard(${card})">${card}</button>`;
+      });
+      document.getElementById("myHand").innerHTML = html;
+    }
+
+    function updateGameUI(room) {
+      document.getElementById("lastCard").textContent = room.lastCard;
+      document.getElementById("currentTurn").textContent = 
+        room.currentTurn === myPlayerKey ? "あなたのターン" : "相手のターン";
+    }
+
+    async function playCard(card) {
+      const roomRef = db.ref('rooms/' + currentRoomId);
+      const snap = await roomRef.once('value');
+      const room = snap.val();
+
+      if (room.currentTurn !== myPlayerKey) return alert("自分のターンではありません");
+      if (card <= room.lastCard) return alert("場より大きい数字を出してください");
+
+      const hand = room.players[myPlayerKey].hand.filter(c => c !== card);
+
+      await roomRef.update({
+        [`players/${myPlayerKey}/hand`]: hand,
+        lastCard: card,
+        currentTurn: myPlayerKey === "player1" ? "player2" : "player1"
+      });
+
+      if (hand.length === 0) {
+        await roomRef.update({ winner: myPlayerKey, status: "finished" });
+      }
+    }
+
+    async function passTurn() {
+      const roomRef = db.ref('rooms/' + currentRoomId);
+      await roomRef.update({
+        lastCard: 0,
+        currentTurn: myPlayerKey === "player1" ? "player2" : "player1"
+      });
+    }
+
+    function endGame(winner) {
+      const isWin = winner === myPlayerKey;
+      alert(isWin ? "勝利！" : "敗北...");
+
+      // 戦績更新
+      const userRef = db.ref('users/' + currentUser.uid);
+      if (isWin) userRef.child('wins').transaction(w => (w || 0) + 1);
+      else userRef.child('losses').transaction(w => (w || 0) + 1);
+
+      setTimeout(() => location.reload(), 2000);
+    }
+
+    // 認証状態監視
+    auth.onAuthStateChanged(user => {
+      if (user) currentUser = user;
+    });
+  </script>
 </body>
 </html>
