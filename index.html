@@ -2,361 +2,425 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>2D Online Survival PvP</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ピッチング対決 - ボットを抑えろ！</title>
     <style>
         body {
             margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: linear-gradient(#0a1f3d, #1a3a6e);
+            color: white;
+            text-align: center;
             overflow: hidden;
-            background-color: #222;
+        }
+        header {
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        #game-container {
             display: flex;
             justify-content: center;
-            align-items: center;
-            height: 100vh;
-            color: white;
-            font-family: sans-serif;
+            align-items: flex-start;
+            gap: 20px;
+            padding: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
         }
         canvas {
-            background-color: #333;
-            border: 2px solid #555;
-            box-shadow: 0 0 20px rgba(0,0,0,0.8);
+            border: 4px solid #ffd700;
+            border-radius: 12px;
+            background: #0a3d1f;
+            box-shadow: 0 0 30px rgba(255,215,0,0.6);
         }
-        #ui {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            pointer-events: none;
+        .controls {
+            background: rgba(0,0,0,0.8);
+            padding: 15px;
+            border-radius: 12px;
+            width: 280px;
+            text-align: left;
         }
-        #status {
-            color: #0f0;
-            margin-bottom: 10px;
+        .pitcher-select {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .pitcher-btn {
+            padding: 10px 15px;
+            background: #333;
+            border: none;
+            color: white;
+            border-radius: 8px;
+            cursor: pointer;
+            flex: 1;
+            font-size: 14px;
+        }
+        .pitcher-btn.active {
+            background: #ffd700;
+            color: black;
+            font-weight: bold;
+        }
+        .pitch-btn {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            margin: 8px 0;
+            background: #1e90ff;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        .pitch-btn:hover {
+            background: #00bfff;
+        }
+        .pitch-btn.fast { background: #ff4444; }
+        .pitch-btn.slow { background: #44aa44; }
+        #info {
+            margin-top: 10px;
+            font-size: 18px;
+            font-weight: bold;
+        }
+        #result {
+            margin-top: 15px;
+            font-size: 22px;
+            min-height: 30px;
+        }
+        .stats {
+            margin-top: 20px;
+            background: rgba(255,255,255,0.1);
+            padding: 10px;
+            border-radius: 8px;
         }
     </style>
 </head>
 <body>
+    <header>⚾ ピッチング対決 - ボットを抑えろ！</header>
+    
+    <div id="game-container">
+        <canvas id="canvas" width="700" height="500"></canvas>
+        
+        <div class="controls">
+            <h2>投手選択</h2>
+            <div class="pitcher-select">
+                <button class="pitcher-btn active" id="p1">投手1<br><small>パワータイプ</small></button>
+                <button class="pitcher-btn" id="p2">投手2<br><small>変化球タイプ</small></button>
+                <button class="pitcher-btn" id="p3">投手3<br><small>コントロール</small></button>
+            </div>
 
-    <div id="ui">
-        <div id="status">サーバー接続中...</div>
-        <div id="hpDisplay">HP: 100 / 100</div>
-        <div id="ammoDisplay">弾薬: 20</div>
-        <div id="weaponDisplay">武器: ハンドガン</div>
+            <h2>球種選択</h2>
+            <button class="pitch-btn fast" id="pitch1">ストレート</button>
+            <button class="pitch-btn" id="pitch2">変化球1</button>
+            <button class="pitch-btn slow" id="pitch3">変化球2</button>
+
+            <div id="info">
+                カウント: <span id="count">0-0</span><br>
+                ストライクアウトまで: <span id="outs">0/3</span>
+            </div>
+
+            <div id="result"></div>
+
+            <div class="stats">
+                <strong>スコア</strong><br>
+                アウト: <span id="out-count">0</span>　<br>
+                被安打: <span id="hit-count">0</span>　<br>
+                三振: <span id="strikeout-count">0</span>
+            </div>
+
+            <button onclick="resetGame()" style="margin-top:15px; padding:10px 20px; font-size:16px;">
+                新しい対戦
+            </button>
+        </div>
     </div>
 
-    <!-- 画面は800x800ですが、内部の論理座標は200x200で計算します -->
-    <canvas id="gameCanvas" width="800" height="800"></canvas>
-
-<script>
-/**
- * ネットワーク設定 (Achex Server)
- */
-const ws = new WebSocket('wss://ws.achex.ca/');
-const ROOM_NAME = "surv_pvp_room_2026_xyz"; // 衝突を防ぐためのユニークなルーム名
-const MY_ID = Math.random().toString(36).substring(2, 9);
-
-let isConnected = false;
-
-ws.onopen = () => {
-    document.getElementById('status').innerText = "サーバー接続完了！";
-    document.getElementById('status').style.color = "#0f0";
-    isConnected = true;
-    
-    // Achexのハブ(ルーム)に参加
-    ws.send(JSON.stringify({ "auth": ROOM_NAME }));
-};
-
-ws.onmessage = (e) => {
-    try {
-        const msg = JSON.parse(e.data);
-        if (msg.s && msg.s !== MY_ID) {
-            handleNetworkMessage(msg.s, msg.d);
-        }
-    } catch (err) {}
-};
-
-function sendMsg(type, data) {
-    if (!isConnected) return;
-    const payload = {
-        to: ROOM_NAME,
-        s: MY_ID,
-        d: { type: type, ...data }
-    };
-    ws.send(JSON.stringify(payload));
-}
-
-/**
- * ゲーム設定と状態管理
- */
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
-const MAP_SIZE = 200; // ステージ範囲 200x200
-const SCALE = 4;      // 描画倍率 (800 / 200 = 4)
-
-// 入力状態
-const keys = { w: false, a: false, s: false, d: false };
-let mouseX = 100, mouseY = 100;
-let isShooting = false;
-
-// ゲームデータ
-const players = {};
-const bullets = [];
-const items = [];
-
-// 自分のプレイヤー情報
-let me = {
-    x: Math.random() * MAP_SIZE,
-    y: Math.random() * MAP_SIZE,
-    radius: 3,
-    hp: 100,
-    maxHp: 100,
-    ammo: 20,
-    speed: 0.8,
-    color: '#00ffff',
-    weaponCooldown: 0,
-    dead: false
-};
-
-/**
- * 入力イベント
- */
-window.addEventListener('keydown', e => { if(keys.hasOwnProperty(e.key)) keys[e.key] = true; });
-window.addEventListener('keyup', e => { if(keys.hasOwnProperty(e.key)) keys[e.key] = false; });
-canvas.addEventListener('mousemove', e => {
-    const rect = canvas.getBoundingClientRect();
-    // マウス座標を200x200の論理座標に変換
-    mouseX = (e.clientX - rect.left) / SCALE;
-    mouseY = (e.clientY - rect.top) / SCALE;
-});
-canvas.addEventListener('mousedown', () => isShooting = true);
-canvas.addEventListener('mouseup', () => isShooting = false);
-
-/**
- * ネットワークメッセージの処理
- */
-function handleNetworkMessage(senderId, data) {
-    if (data.type === 'update') {
-        players[senderId] = data;
-    } else if (data.type === 'shoot') {
-        bullets.push({
-            x: data.x, y: data.y, vx: data.vx, vy: data.vy,
-            owner: senderId, life: 60 // 弾の寿命(フレーム)
-        });
-    } else if (data.type === 'hit' && data.target === MY_ID) {
-        if (!me.dead) {
-            me.hp -= 15;
-            if (me.hp <= 0) die();
-        }
-    } else if (data.type === 'itemSpawn') {
-        items.push(data.item);
-    } else if (data.type === 'itemPickup') {
-        const idx = items.findIndex(i => i.id === data.itemId);
-        if (idx !== -1) items.splice(idx, 1);
-    }
-}
-
-/**
- * ゲームロジック
- */
-function die() {
-    me.dead = true;
-    me.hp = 0;
-    setTimeout(() => {
-        // 3秒後にリスポーン
-        me.dead = false;
-        me.hp = me.maxHp;
-        me.ammo = 20;
-        me.x = Math.random() * MAP_SIZE;
-        me.y = Math.random() * MAP_SIZE;
-    }, 3000);
-}
-
-// アイテムの自動生成（P2Pなので各クライアントが確率で生成し同期する）
-function spawnItemLogic() {
-    if (Math.random() < 0.01 && items.length < 15) {
-        const types = ['heal', 'ammo', 'weapon_upgrade'];
-        const type = types[Math.floor(Math.random() * types.length)];
-        const newItem = {
-            id: Math.random().toString(36).substring(2),
-            x: Math.random() * MAP_SIZE,
-            y: Math.random() * MAP_SIZE,
-            type: type
-        };
-        items.push(newItem);
-        sendMsg('itemSpawn', { item: newItem });
-    }
-}
-
-function update() {
-    if (!me.dead) {
-        // 移動処理
-        let dx = 0, dy = 0;
-        if (keys.w) dy -= me.speed;
-        if (keys.s) dy += me.speed;
-        if (keys.a) dx -= me.speed;
-        if (keys.d) dx += me.speed;
-
-        // 斜め移動の正規化
-        if (dx !== 0 && dy !== 0) {
-            const length = Math.sqrt(dx * dx + dy * dy);
-            dx = (dx / length) * me.speed;
-            dy = (dy / length) * me.speed;
-        }
-
-        me.x += dx;
-        me.y += dy;
-
-        // 200x200の範囲制限
-        me.x = Math.max(me.radius, Math.min(MAP_SIZE - me.radius, me.x));
-        me.y = Math.max(me.radius, Math.min(MAP_SIZE - me.radius, me.y));
-
-        // 射撃処理
-        if (me.weaponCooldown > 0) me.weaponCooldown--;
-        if (isShooting && me.weaponCooldown <= 0 && me.ammo > 0) {
-            const angle = Math.atan2(mouseY - me.y, mouseX - me.x);
-            const speed = 3;
-            const vx = Math.cos(angle) * speed;
-            const vy = Math.sin(angle) * speed;
-            
-            me.ammo--;
-            me.weaponCooldown = 15; // 連射速度
-
-            sendMsg('shoot', { x: me.x, y: me.y, vx: vx, vy: vy });
-        }
-
-        // アイテム取得判定
-        for (let i = items.length - 1; i >= 0; i--) {
-            const item = items[i];
-            const dist = Math.sqrt((me.x - item.x)**2 + (me.y - item.y)**2);
-            if (dist < me.radius + 3) {
-                if (item.type === 'heal') me.hp = Math.min(me.maxHp, me.hp + 40);
-                if (item.type === 'ammo') me.ammo += 30;
-                if (item.type === 'weapon_upgrade') { me.speed = 1.2; me.maxHp = 150; me.hp += 50; }
-                
-                sendMsg('itemPickup', { itemId: item.id });
-                items.splice(i, 1);
-            }
-        }
-    }
-
-    // 弾の移動と衝突判定
-    for (let i = bullets.length - 1; i >= 0; i--) {
-        let b = bullets[i];
-        b.x += b.vx;
-        b.y += b.vy;
-        b.life--;
-
-        // 弾が自分に当たったか判定（他人の弾のみ）
-        if (b.owner !== MY_ID && !me.dead) {
-            const dist = Math.sqrt((me.x - b.x)**2 + (me.y - b.y)**2);
-            if (dist < me.radius + 1) {
-                sendMsg('hit', { target: MY_ID });
-                me.hp -= 15;
-                if (me.hp <= 0) die();
-                bullets.splice(i, 1);
-                continue;
-            }
-        }
-
-        if (b.life <= 0 || b.x < 0 || b.x > MAP_SIZE || b.y < 0 || b.y > MAP_SIZE) {
-            bullets.splice(i, 1);
-        }
-    }
-
-    spawnItemLogic();
-
-    // 状態をサーバーに送信（ネットワーク負荷軽減のため少し間引くのが理想ですが、今回はシンプルに毎フレーム送信）
-    if (Math.random() < 0.5) { 
-        sendMsg('update', { x: me.x, y: me.y, hp: me.hp, dead: me.dead, color: me.color });
-    }
-
-    // UI更新
-    document.getElementById('hpDisplay').innerText = `HP: ${me.hp} / ${me.maxHp}`;
-    document.getElementById('ammoDisplay').innerText = `弾薬: ${me.ammo}`;
-    if(me.dead) document.getElementById('hpDisplay').innerText = "死亡... リスポーン待機中";
-}
-
-/**
- * 描画処理
- */
-function draw() {
-    // 描画をSCALE倍に拡大
-    ctx.save();
-    ctx.scale(SCALE, SCALE);
-
-    // 背景クリア
-    ctx.fillStyle = '#333';
-    ctx.fillRect(0, 0, MAP_SIZE, MAP_SIZE);
-
-    // グリッド線 (200x200の範囲をわかりやすくする)
-    ctx.strokeStyle = '#444';
-    ctx.lineWidth = 0.2;
-    for (let i = 0; i <= MAP_SIZE; i += 10) {
-        ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, MAP_SIZE); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(MAP_SIZE, i); ctx.stroke();
-    }
-
-    // アイテムの描画
-    items.forEach(item => {
-        ctx.beginPath();
-        ctx.arc(item.x, item.y, 2, 0, Math.PI * 2);
-        if (item.type === 'heal') ctx.fillStyle = '#0f0'; // 緑: 回復
-        else if (item.type === 'ammo') ctx.fillStyle = '#ff0'; // 黄: 弾薬
-        else ctx.fillStyle = '#f0f'; // 紫: 武器アップグレード
-        ctx.fill();
-    });
-
-    // 他のプレイヤーの描画
-    for (let id in players) {
-        let p = players[id];
-        if (p.dead) continue;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
-        ctx.fillStyle = '#ff4444'; // 敵は赤
-        ctx.fill();
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
         
-        // HPバー
-        ctx.fillStyle = '#f00';
-        ctx.fillRect(p.x - 3, p.y - 5, 6, 1);
-        ctx.fillStyle = '#0f0';
-        ctx.fillRect(p.x - 3, p.y - 5, 6 * (p.hp / 100), 1);
-    }
+        // 投手データ
+        let pitchers = [
+            {
+                name: "投手1",
+                pitches: [
+                    { name: "ストレート", speed: 164, breakX: 0, breakY: 5, color: "#ff4444" },
+                    { name: "イーファスピッチ", speed: 89, breakX: 8, breakY: 25, color: "#44ff44" },
+                    { name: "チェンジアップ", speed: 120, breakX: 3, breakY: 18, color: "#ffaa00" }
+                ]
+            },
+            {
+                name: "投手2",
+                pitches: [
+                    { name: "スライダー", speed: 148, breakX: -25, breakY: 10, color: "#4488ff" },
+                    { name: "カーブ", speed: 132, breakX: 22, breakY: 20, color: "#ff44ff" },
+                    { name: "フォーシーム", speed: 158, breakX: 2, breakY: 8, color: "#ff4444" }
+                ]
+            },
+            {
+                name: "投手3",
+                pitches: [
+                    { name: "カッター", speed: 152, breakX: -12, breakY: 12, color: "#ffaa00" },
+                    { name: "スプリッター", speed: 138, breakX: 5, breakY: 22, color: "#44ff88" },
+                    { name: "シンカー", speed: 145, breakX: 18, breakY: 15, color: "#8888ff" }
+                ]
+            }
+        ];
 
-    // 自分の描画
-    if (!me.dead) {
-        ctx.beginPath();
-        ctx.arc(me.x, me.y, me.radius, 0, Math.PI * 2);
-        ctx.fillStyle = me.color;
-        ctx.fill();
+        let currentPitcher = 0;
+        let currentPitchType = 0;
+        let balls = 0, strikes = 0;
+        let outs = 0;
+        let hits = 0;
+        let strikeouts = 0;
+        let isThrowing = false;
+        let pitchTrajectory = null;
 
-        // 照準線
-        ctx.beginPath();
-        ctx.moveTo(me.x, me.y);
-        ctx.lineTo(mouseX, mouseY);
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-        ctx.lineWidth = 0.5;
-        ctx.stroke();
-    }
+        // ストライクゾーン
+        const zone = { x: 320, y: 220, w: 120, h: 160 };
 
-    // 弾の描画
-    ctx.fillStyle = '#fff';
-    bullets.forEach(b => {
-        ctx.beginPath();
-        ctx.arc(b.x, b.y, 1, 0, Math.PI * 2);
-        ctx.fill();
-    });
+        function drawBackground() {
+            // グラウンド
+            ctx.fillStyle = "#0a3d1f";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // 土
+            ctx.fillStyle = "#8B4513";
+            ctx.fillRect(0, 400, canvas.width, 100);
+            
+            // 投手板
+            ctx.fillStyle = "#ddd";
+            ctx.fillRect(180, 320, 80, 40);
+            
+            // ホームベース
+            ctx.fillStyle = "#fff";
+            ctx.beginPath();
+            ctx.moveTo(380, 420);
+            ctx.lineTo(420, 420);
+            ctx.lineTo(400, 460);
+            ctx.closePath();
+            ctx.fill();
+            
+            // ストライクゾーン
+            ctx.strokeStyle = "#ffff00";
+            ctx.lineWidth = 3;
+            ctx.strokeRect(zone.x, zone.y, zone.w, zone.h);
+            
+            // バッター
+            ctx.fillStyle = "#333";
+            ctx.fillRect(390, 280, 60, 140); // 体
+            ctx.fillStyle = "#f0d0b0";
+            ctx.beginPath();
+            ctx.arc(420, 260, 25, 0, Math.PI * 2);
+            ctx.fill(); // 頭
+        }
 
-    ctx.restore();
-}
+        function drawPitcher() {
+            // 投手
+            ctx.fillStyle = "#fff";
+            ctx.fillRect(200, 250, 50, 100); // 体
+            ctx.fillStyle = "#f0d0b0";
+            ctx.beginPath();
+            ctx.arc(225, 230, 20, 0, Math.PI * 2);
+            ctx.fill();
+        }
 
-/**
- * メインループ
- */
-function loop() {
-    update();
-    draw();
-    requestAnimationFrame(loop);
-}
+        function drawBall(x, y) {
+            ctx.fillStyle = "#ffffff";
+            ctx.beginPath();
+            ctx.arc(x, y, 12, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = "#000";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
 
-loop();
+        function animatePitch() {
+            if (!pitchTrajectory) return;
+            
+            let { x, y, vx, vy, progress } = pitchTrajectory;
+            
+            drawBackground();
+            drawPitcher();
+            
+            x += vx;
+            y += vy;
+            progress += 0.018;
+            
+            // 変化球の動き
+            const breakAmount = Math.sin(progress * Math.PI) * 0.8;
+            x += pitchTrajectory.breakX * breakAmount * 0.6;
+            y += pitchTrajectory.breakY * breakAmount * 0.4;
+            
+            drawBall(x, y);
+            
+            pitchTrajectory.x = x;
+            pitchTrajectory.y = y;
+            pitchTrajectory.progress = progress;
+            
+            // 到達判定
+            if (y > 410) {
+                isThrowing = false;
+                resolvePitch(x);
+                return;
+            }
+            
+            requestAnimationFrame(animatePitch);
+        }
 
-</script>
+        function throwPitch() {
+            if (isThrowing) return;
+            isThrowing = true;
+            
+            const pitch = pitchers[currentPitcher].pitches[currentPitchType];
+            const speedFactor = (170 - pitch.speed) / 40; // 速いほど早い
+            
+            // 狙い目（ストライクゾーン中央付近に少しランダム）
+            const targetX = zone.x + zone.w/2 + (Math.random() * 40 - 20);
+            const targetY = zone.y + zone.h/2 + (Math.random() * 30 - 15);
+            
+            const startX = 240;
+            const startY = 280;
+            
+            pitchTrajectory = {
+                x: startX,
+                y: startY,
+                vx: (targetX - startX) * 0.035,
+                vy: (targetY - startY) * 0.035,
+                breakX: pitch.breakX,
+                breakY: pitch.breakY,
+                progress: 0
+            };
+            
+            animatePitch();
+        }
+
+        function resolvePitch(ballX) {
+            pitchTrajectory = null;
+            
+            const inStrikeZone = ballX > zone.x && ballX < zone.x + zone.w;
+            
+            // 打者の反応（速い球ほど見逃しやすいが、当たりにくい）
+            const pitch = pitchers[currentPitcher].pitches[currentPitchType];
+            const hitChance = inStrikeZone ? 
+                Math.max(0.15, (180 - pitch.speed) / 90) : 0.08;
+            
+            if (Math.random() < hitChance) {
+                // 安打
+                document.getElementById('result').innerHTML = `<span style="color:#ff4444">⚾ 安打！</span>`;
+                hits++;
+                resetCount();
+            } else {
+                if (inStrikeZone) {
+                    strikes++;
+                    document.getElementById('result').innerHTML = `<span style="color:#ffdd44">ストライク！</span>`;
+                } else {
+                    balls++;
+                    document.getElementById('result').innerHTML = `<span style="color:#44aaff">ボール</span>`;
+                }
+                
+                updateCount();
+                
+                if (strikes >= 3) {
+                    strikeouts++;
+                    document.getElementById('result').innerHTML = `<span style="color:#44ff88">三振！</span>`;
+                    outs++;
+                    resetCount();
+                }
+                if (balls >= 4) {
+                    document.getElementById('result').innerHTML = `<span style="color:#ffaa44">四球</span>`;
+                    resetCount();
+                }
+            }
+            
+            updateStats();
+            
+            if (outs >= 3) {
+                setTimeout(() => {
+                    alert("ゲーム終了！\n三振: " + strikeouts + "　被安打: " + hits);
+                    resetGame();
+                }, 800);
+            }
+        }
+
+        function updateCount() {
+            document.getElementById('count').textContent = `${balls}-${strikes}`;
+            document.getElementById('outs').textContent = `${outs}/3`;
+        }
+
+        function resetCount() {
+            balls = 0;
+            strikes = 0;
+            updateCount();
+        }
+
+        function updateStats() {
+            document.getElementById('out-count').textContent = outs;
+            document.getElementById('hit-count').textContent = hits;
+            document.getElementById('strikeout-count').textContent = strikeouts;
+        }
+
+        // イベントリスナー
+        document.getElementById('p1').onclick = () => selectPitcher(0);
+        document.getElementById('p2').onclick = () => selectPitcher(1);
+        document.getElementById('p3').onclick = () => selectPitcher(2);
+
+        function selectPitcher(n) {
+            currentPitcher = n;
+            document.querySelectorAll('.pitcher-btn').forEach((btn, i) => {
+                btn.classList.toggle('active', i === n);
+            });
+            updatePitchButtons();
+        }
+
+        function updatePitchButtons() {
+            const pitches = pitchers[currentPitcher].pitches;
+            document.getElementById('pitch1').textContent = pitches[0].name;
+            document.getElementById('pitch2').textContent = pitches[1].name;
+            document.getElementById('pitch3').textContent = pitches[2].name;
+        }
+
+        document.getElementById('pitch1').onclick = () => { currentPitchType = 0; throwPitch(); };
+        document.getElementById('pitch2').onclick = () => { currentPitchType = 1; throwPitch(); };
+        document.getElementById('pitch3').onclick = () => { currentPitchType = 2; throwPitch(); };
+
+        // マウスで狙いながら投げる（簡易）
+        canvas.addEventListener('click', (e) => {
+            if (isThrowing) return;
+            throwPitch();
+        });
+
+        function resetGame() {
+            balls = 0;
+            strikes = 0;
+            outs = 0;
+            hits = 0;
+            strikeouts = 0;
+            updateCount();
+            updateStats();
+            document.getElementById('result').innerHTML = "投球準備完了！";
+        }
+
+        // 初期化
+        function init() {
+            updatePitchButtons();
+            resetGame();
+            // 初回描画
+            setInterval(() => {
+                if (!isThrowing) {
+                    drawBackground();
+                    drawPitcher();
+                }
+            }, 100);
+            
+            // 最初の投球案内
+            setTimeout(() => {
+                document.getElementById('result').innerHTML = "クリックor球種ボタンで投球！";
+            }, 500);
+        }
+
+        init();
+    </script>
 </body>
 </html>
