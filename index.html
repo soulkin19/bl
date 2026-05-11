@@ -1,347 +1,193 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>数字出し対戦</title>
-  <script src="https://www.gstatic.com/firebasejs/11.0.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/11.0.1/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/11.0.1/firebase-database-compat.js"></script>
-  <style>
-    body {
-      font-family: 'Segoe UI', Arial, sans-serif;
-      margin: 0;
-      padding: 0;
-      background: linear-gradient(135deg, #0f1626, #1a2339);
-      color: #eee;
-      min-height: 100vh;
-    }
-    .container { max-width: 900px; margin: 0 auto; padding: 20px; }
-    h1 { text-align: center; margin-bottom: 10px; color: #00d4ff; }
-    .card {
-      display: inline-block;
-      width: 70px;
-      height: 95px;
-      background: linear-gradient(#fff, #f0f0f0);
-      color: #111;
-      font-size: 32px;
-      font-weight: bold;
-      text-align: center;
-      line-height: 95px;
-      margin: 6px;
-      border-radius: 12px;
-      box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-      cursor: pointer;
-      transition: transform 0.2s;
-    }
-    .card:hover { transform: scale(1.1); }
-    button {
-      padding: 12px 24px;
-      margin: 8px 4px;
-      font-size: 16px;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      background: #00b4d8;
-      color: white;
-    }
-    button.red { background: #e74c3c; }
-    .panel {
-      background: rgba(255,255,255,0.08);
-      padding: 20px;
-      border-radius: 12px;
-      margin: 15px 0;
-    }
-    .log {
-      height: 180px;
-      overflow-y: auto;
-      background: #0d1421;
-      padding: 12px;
-      border-radius: 8px;
-      font-size: 14px;
-    }
-    input { padding: 12px; width: 220px; border-radius: 8px; border: none; margin-right: 8px; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>1-15 Card Duel</title>
+    <style>
+        body { font-family: sans-serif; background: #f0f2f5; display: flex; justify-content: center; padding: 20px; }
+        #app { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); width: 100%; max-width: 500px; text-align: center; }
+        .hidden { display: none; }
+        .card-container { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 20px 0; }
+        .card { padding: 15px 10px; width: 40px; border: 2px solid #333; border-radius: 8px; cursor: pointer; font-weight: bold; background: white; transition: 0.2s; }
+        .card:hover { background: #eee; transform: translateY(-3px); }
+        .card.disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        #field { font-size: 3rem; margin: 20px 0; min-height: 80px; color: #007bff; font-weight: bold; }
+        .status-bar { padding: 10px; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px; font-size: 0.9rem; }
+        button.main-btn { padding: 10px 20px; font-size: 1rem; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 5px; margin: 5px; }
+        button.pass-btn { background: #6c757d; }
+    </style>
 </head>
 <body>
-  <div class="container">
-    <h1>数字出し対戦</h1>
 
-    <!-- 名前入力 -->
-    <div id="nameScreen" class="panel">
-      <h2>表示名を入力</h2>
-      <input type="text" id="playerName" placeholder="名前（最大12文字）" maxlength="12">
-      <button onclick="startWithName()">決定して開始</button>
+<div id="app">
+    <h1>1-15 Card Duel</h1>
+
+    <!-- ロビー画面 -->
+    <div id="lobby">
+        <button class="main-btn" onclick="startMatch(true)">ランダムマッチ</button>
+        <div style="margin: 10px;">または</div>
+        <input type="text" id="roomInput" placeholder="ルームIDを入力">
+        <button class="main-btn" onclick="startMatch(false)">ルーム参戦/作成</button>
     </div>
 
-    <!-- メイン画面 -->
-    <div id="mainScreen" style="display:none;">
-      <div class="panel">
-        <strong>プレイヤー:</strong> <span id="displayName"></span>
-      </div>
-
-      <div class="panel">
-        <button onclick="createRoom()">部屋を作成する</button>
-        <button onclick="startRandomMatch()">ランダムマッチ</button>
-        
-        <div style="margin-top:15px;">
-          <input type="text" id="joinRoomId" placeholder="部屋IDを入力">
-          <button onclick="joinRoomById()">部屋に入る</button>
+    <!-- ゲーム画面 -->
+    <div id="game" class="hidden">
+        <div class="status-bar">
+            ID: <span id="displayRoomId">---</span> | 
+            <span id="turnInfo">接続中...</span>
         </div>
-      </div>
+        <div id="opponent-status">相手の手札: <span id="oppCount">13</span>枚</div>
+        
+        <div id="field">0</div>
+        <p>場のカードより大きい数字を出してください</p>
 
-      <!-- ゲーム画面 -->
-      <div id="gameScreen" class="panel" style="display:none;">
-        <h2>対戦相手: <span id="opponentName"></span></h2>
-        <p style="font-size:18px;">場に出ている数字: <span id="lastCard" style="font-size:42px; font-weight:bold; color:#ffd700;">0</span></p>
-        <p><strong id="currentTurn" style="color:#00ff88;">あなたのターン</strong></p>
-
-        <div id="myHand" style="min-height:120px;"></div>
-
-        <button onclick="passTurn()" class="red">パスする</button>
-
-        <div class="log" id="gameLog"></div>
-      </div>
+        <div id="my-hand" class="card-container"></div>
+        
+        <button id="passBtn" class="main-btn pass-btn" onclick="handlePass()">パス（場をリセット）</button>
     </div>
-  </div>
+</div>
 
-  <script>
-    // ====================== Firebase ======================
+<!-- Firebase SDK -->
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getDatabase, ref, set, update, onValue, push, query, orderByChild, equalTo, get } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
     const firebaseConfig = {
-      apiKey: "AIzaSyCwhHspaG94goiCIjVj3h-Un5pBK3JTjMU",
-      authDomain: "soulkin-aa3b7.firebaseapp.com",
-      databaseURL: "https://soulkin-aa3b7-default-rtdb.firebaseio.com",
-      projectId: "soulkin-aa3b7",
-      storageBucket: "soulkin-aa3b7.firebasestorage.app",
-      messagingSenderId: "358331064206",
-      appId: "1:358331064206:web:d7760ea0919259418a4edf"
+        apiKey: "AIzaSyCwhHspaG94goiCIjVj3h-Un5pBK3JTjMU",
+        authDomain: "soulkin-aa3b7.firebaseapp.com",
+        databaseURL: "https://soulkin-aa3b7-default-rtdb.firebaseio.com",
+        projectId: "soulkin-aa3b7",
+        storageBucket: "soulkin-aa3b7.firebasestorage.app",
+        messagingSenderId: "358331064206",
+        appId: "1:358331064206:web:d7760ea0919259418a4edf",
+        measurementId: "G-S5Z8TTWYE2"
     };
 
-    firebase.initializeApp(firebaseConfig);
-    const auth = firebase.auth();
-    const db = firebase.database();
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
 
-    let currentUser = null;
+    let myId = null; // "p1" or "p2"
     let currentRoomId = null;
-    let myPlayerKey = null;   // "player1" or "player2"
-    let playerName = "";
+    let myHand = [];
 
-    // ====================== 開始 ======================
-    async function startWithName() {
-      playerName = document.getElementById("playerName").value.trim();
-      if (!playerName) {
-        alert("表示名を入力してください");
-        return;
-      }
+    // --- マッチングロジック ---
+    window.startMatch = async (isRandom) => {
+        let roomId = document.getElementById('roomInput').value;
+        const roomsRef = ref(db, 'rooms');
 
-      try {
-        const userCredential = await auth.signInAnonymously();
-        currentUser = userCredential.user;
-
-        // 簡易ユーザー情報保存
-        await db.ref('users/' + currentUser.uid).update({
-          displayName: playerName,
-          lastLogin: Date.now()
-        });
-
-        document.getElementById("nameScreen").style.display = "none";
-        document.getElementById("mainScreen").style.display = "block";
-        document.getElementById("displayName").textContent = playerName;
-      } catch (e) {
-        console.error(e);
-        alert("エラーが発生しました");
-      }
-    }
-
-    // ====================== 部屋作成 ======================
-    async function createRoom() {
-      currentRoomId = "room_" + Date.now().toString(36);
-      myPlayerKey = "player1";
-
-      const { p1Hand, p2Hand } = dealCards();
-
-      const roomData = {
-        status: "waiting",
-        createdAt: Date.now(),
-        lastCard: 0,
-        currentTurn: "player1",
-        players: {
-          player1: { uid: currentUser.uid, displayName: playerName, hand: p1Hand }
+        if (isRandom) {
+            const waitingQuery = query(roomsRef, orderByChild('state'), equalTo('waiting'));
+            const snapshot = await get(waitingQuery);
+            if (snapshot.exists()) {
+                roomId = Object.keys(snapshot.val())[0];
+            } else {
+                roomId = "room_" + Math.random().toString(36).substring(7);
+            }
         }
-      };
 
-      await db.ref('rooms/' + currentRoomId).set(roomData);
-      enterRoom(currentRoomId);
-    }
+        if (!roomId) return alert("ルームIDを入力してください");
+        setupRoom(roomId);
+    };
 
-    // ====================== ランダムマッチ（改善版） ======================
-    async function startRandomMatch() {
-      const queueRef = db.ref('matchQueue');
-      const myQueueRef = queueRef.child(currentUser.uid);
+    async function setupRoom(roomId) {
+        currentRoomId = roomId;
+        const roomRef = ref(db, `rooms/${roomId}`);
+        const snapshot = await get(roomRef);
 
-      // 既存の待機者を探す
-      const snapshot = await queueRef.limitToFirst(10).once('value');
-      let matchedRoomId = null;
+        if (!snapshot.exists()) {
+            // P1として部屋作成
+            myId = "p1";
+            const deck = Array.from({length: 15}, (_, i) => [i+1, i+1]).flat().sort(() => Math.random() - 0.5);
+            myHand = deck.slice(0, 13);
+            const p2Hand = deck.slice(13, 26); // 残り4枚は deck.slice(26, 30) で未使用
 
-      snapshot.forEach(child => {
-        if (child.key !== currentUser.uid) {
-          matchedRoomId = child.val().roomId;
-          queueRef.child(child.key).remove();
-          return true;
+            await set(roomRef, {
+                state: "waiting",
+                lastCard: 0,
+                turn: Math.random() > 0.5 ? "p1" : "p2",
+                p1: { hand: myHand, count: 13 },
+                p2: { hand: p2Hand, count: 13 },
+                lastAction: "start"
+            });
+        } else {
+            // P2として参加
+            myId = "p2";
+            await update(roomRef, { state: "playing" });
         }
-      });
 
-      if (matchedRoomId) {
-        // マッチ成立（player2として参加）
-        myPlayerKey = "player2";
-        currentRoomId = matchedRoomId;
-        enterRoomAsPlayer2(matchedRoomId);
-      } else {
-        // 待機キューに入る
-        const newRoomId = "room_" + Date.now().toString(36);
-        await myQueueRef.set({
-          uid: currentUser.uid,
-          displayName: playerName,
-          roomId: newRoomId,
-          timestamp: Date.now()
-        });
-        currentRoomId = newRoomId;
-        myPlayerKey = "player1";
-        enterRoom(newRoomId);
-        addLog("対戦相手を探しています...");
-      }
+        document.getElementById('lobby').classList.add('hidden');
+        document.getElementById('game').classList.remove('hidden');
+        document.getElementById('displayRoomId').innerText = roomId;
+        listenRoom();
     }
 
-    async function enterRoomAsPlayer2(roomId) {
-      const roomRef = db.ref('rooms/' + roomId);
-      const snap = await roomRef.once('value');
-      const room = snap.val();
+    // --- ゲーム監視 ---
+    function listenRoom() {
+        const roomRef = ref(db, `rooms/${currentRoomId}`);
+        onValue(roomRef, (snapshot) => {
+            const data = snapshot.val();
+            if (!data) return;
 
-      if (room && room.players && !room.players.player2) {
-        const { p1Hand, p2Hand } = dealCards();
+            myHand = data[myId].hand || [];
+            const isMyTurn = data.turn === myId;
+            const lastCard = data.lastCard;
+
+            // UI更新
+            document.getElementById('field').innerText = lastCard === 0 ? "RESET" : lastCard;
+            document.getElementById('oppCount').innerText = data[myId === "p1" ? "p2" : "p1"].count;
+            document.getElementById('turnInfo').innerText = isMyTurn ? "あなたの番です" : "相手の番です...";
+            document.getElementById('turnInfo').style.color = isMyTurn ? "#28a745" : "#dc3545";
+
+            renderHand(isMyTurn, lastCard);
+
+            // 勝敗判定
+            if (data.p1.count === 0) endGame(data.p1.count === 0 && myId === "p1");
+            if (data.p2.count === 0) endGame(data.p2.count === 0 && myId === "p2");
+        });
+    }
+
+    function renderHand(isMyTurn, lastCard) {
+        const container = document.getElementById('my-hand');
+        container.innerHTML = '';
+        myHand.sort((a, b) => a - b).forEach((num, index) => {
+            const card = document.createElement('div');
+            card.className = `card ${(!isMyTurn || num <= lastCard) ? 'disabled' : ''}`;
+            card.innerText = num;
+            card.onclick = () => {
+                if (isMyTurn && num > lastCard) handlePlay(num);
+            };
+            container.appendChild(card);
+        });
+    }
+
+    // --- アクション ---
+    async function handlePlay(num) {
+        const roomRef = ref(db, `rooms/${currentRoomId}`);
+        const newHand = myHand.filter((c, i) => i !== myHand.indexOf(num));
         
-        await roomRef.update({
-          status: "playing",
-          [`players/player2`]: {
-            uid: currentUser.uid,
-            displayName: playerName,
-            hand: p2Hand
-          }
+        await update(roomRef, {
+            lastCard: num,
+            turn: myId === "p1" ? "p2" : "p1",
+            [`${myId}/hand`]: newHand,
+            [`${myId}/count`]: newHand.length
         });
-        enterRoom(roomId);
-      }
     }
 
-    // ====================== 部屋IDで参加 ======================
-    async function joinRoomById() {
-      const roomId = document.getElementById("joinRoomId").value.trim();
-      if (!roomId) return alert("部屋IDを入力してください");
-      enterRoom(roomId);
-    }
-
-    // ====================== 部屋に入る ======================
-    function enterRoom(roomId) {
-      currentRoomId = roomId;
-      const roomRef = db.ref('rooms/' + roomId);
-
-      roomRef.on('value', (snapshot) => {
-        const room = snapshot.val();
-        if (!room) return;
-
-        if (room.status === "playing" && document.getElementById("gameScreen").style.display !== "block") {
-          startGame(room);
-        }
-        if (room.winner) {
-          endGame(room.winner === myPlayerKey);
-        }
-      });
-    }
-
-    function dealCards() {
-      let deck = [];
-      for (let i = 1; i <= 15; i++) deck.push(i, i);
-      deck.sort(() => Math.random() - 0.5);
-      return {
-        p1Hand: deck.slice(0, 13).sort((a,b)=>a-b),
-        p2Hand: deck.slice(13, 26).sort((a,b)=>a-b)
-      };
-    }
-
-    function startGame(room) {
-      document.getElementById("gameScreen").style.display = "block";
-      
-      const opponent = myPlayerKey === "player1" ? room.players.player2 : room.players.player1;
-      document.getElementById("opponentName").textContent = opponent.displayName || "相手";
-
-      renderMyHand(room);
-      updateGameUI(room);
-    }
-
-    function renderMyHand(room) {
-      const handDiv = document.getElementById("myHand");
-      handDiv.innerHTML = "";
-      const hand = room.players[myPlayerKey]?.hand || [];
-      
-      hand.forEach(card => {
-        const el = document.createElement("div");
-        el.className = "card";
-        el.textContent = card;
-        el.onclick = () => playCard(card);
-        handDiv.appendChild(el);
-      });
-    }
-
-    function updateGameUI(room) {
-      document.getElementById("lastCard").textContent = room.lastCard || 0;
-      const isMyTurn = room.currentTurn === myPlayerKey;
-      document.getElementById("currentTurn").textContent = isMyTurn ? "あなたのターンです" : "相手のターン";
-      document.getElementById("currentTurn").style.color = isMyTurn ? "#00ff88" : "#ffcc00";
-    }
-
-    async function playCard(card) {
-      const roomRef = db.ref('rooms/' + currentRoomId);
-      const snap = await roomRef.once('value');
-      const room = snap.val();
-
-      if (!room || room.currentTurn !== myPlayerKey) return alert("自分のターンではありません");
-      if (card <= (room.lastCard || 0)) return alert("場より大きい数字を出す必要があります");
-
-      const hand = room.players[myPlayerKey].hand.filter(c => c !== card);
-
-      await roomRef.update({
-        [`players/${myPlayerKey}/hand`]: hand,
-        lastCard: card,
-        currentTurn: myPlayerKey === "player1" ? "player2" : "player1"
-      });
-
-      if (hand.length === 0) {
-        await roomRef.update({ winner: myPlayerKey, status: "finished" });
-      }
-    }
-
-    async function passTurn() {
-      if (!currentRoomId) return;
-      const roomRef = db.ref('rooms/' + currentRoomId);
-      await roomRef.update({
-        lastCard: 0,
-        currentTurn: myPlayerKey === "player1" ? "player2" : "player1"
-      });
+    async function handlePass() {
+        const roomRef = ref(db, `rooms/${currentRoomId}`);
+        // パス時は場を0にリセットし、相手のターンへ
+        await update(roomRef, {
+            lastCard: 0,
+            turn: myId === "p1" ? "p2" : "p1"
+        });
     }
 
     function endGame(isWin) {
-      alert(isWin ? "おめでとうございます！勝利しました！" : "残念... 負けてしまいました");
-      setTimeout(() => location.reload(), 1500);
+        alert(isWin ? "おめでとう！あなたの勝利です！" : "残念... 相手が先に上がりました。");
+        location.reload();
     }
+</script>
 
-    function addLog(message) {
-      const log = document.getElementById("gameLog");
-      const time = new Date().toLocaleTimeString("ja-JP", {hour:"2-digit", minute:"2-digit"});
-      log.innerHTML += `<div>[${time}] ${message}</div>`;
-      log.scrollTop = log.scrollHeight;
-    }
-
-    // 認証監視
-    auth.onAuthStateChanged(user => { if (user) currentUser = user; });
-  </script>
 </body>
 </html>
