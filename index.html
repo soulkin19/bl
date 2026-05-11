@@ -2,185 +2,361 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>3D PvP Survival - Achex</title>
+    <title>2D Online Survival PvP</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
-        #ui { position: absolute; top: 10px; left: 10px; color: white; pointer-events: none; }
-        #crosshair { position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; border: 2px solid white; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; }
-        /* iPad用の簡易ジョイスティックエリア */
-        #touch-controls { position: absolute; bottom: 20px; left: 20px; width: 100px; height: 100px; background: rgba(255,255,255,0.2); border-radius: 50%; display: none; }
-        #fire-btn { position: absolute; bottom: 40px; right: 40px; width: 80px; height: 80px; background: rgba(255,0,0,0.5); border-radius: 50%; display: none; text-align: center; line-height: 80px; color: white; font-weight: bold; }
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #222;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: white;
+            font-family: sans-serif;
+        }
+        canvas {
+            background-color: #333;
+            border: 2px solid #555;
+            box-shadow: 0 0 20px rgba(0,0,0,0.8);
+        }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+        }
+        #status {
+            color: #0f0;
+            margin-bottom: 10px;
+        }
     </style>
 </head>
 <body>
 
-<div id="ui">
-    <div>HP: <span id="hp">100</span> | Ammo: <span id="ammo">30</span></div>
-    <div id="status">Connecting to Achex...</div>
-</div>
-<div id="crosshair"></div>
-<div id="touch-controls"></div>
-<div id="fire-btn">FIRE</div>
+    <div id="ui">
+        <div id="status">サーバー接続中...</div>
+        <div id="hpDisplay">HP: 100 / 100</div>
+        <div id="ammoDisplay">弾薬: 20</div>
+        <div id="weaponDisplay">武器: ハンドガン</div>
+    </div>
 
-<!-- Three.js & Achex Client -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- 画面は800x800ですが、内部の論理座標は200x200で計算します -->
+    <canvas id="gameCanvas" width="800" height="800"></canvas>
 
 <script>
-// --- 設定 ---
-const MAP_SIZE = 200;
-const HUB_NAME = "my_super_pvp_game_1234"; // ユニークな名前に変更してください
-const myId = "player_" + Math.floor(Math.random() * 1000);
-let players = {};
-let items = [];
+/**
+ * ネットワーク設定 (Achex Server)
+ */
+const ws = new WebSocket('wss://ws.achex.ca/');
+const ROOM_NAME = "surv_pvp_room_2026_xyz"; // 衝突を防ぐためのユニークなルーム名
+const MY_ID = Math.random().toString(36).substring(2, 9);
 
-// --- Three.js セットアップ ---
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x87ceeb); // 空の色
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-document.body.appendChild(renderer.domElement);
+let isConnected = false;
 
-// 地面
-const gridHelper = new THREE.GridHelper(MAP_SIZE, 20);
-scene.add(gridHelper);
-const floorGeom = new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE);
-const floorMat = new THREE.MeshPhongMaterial({ color: 0x44aa44 });
-const floor = new THREE.Mesh(floorGeom, floorMat);
-floor.rotation.x = -Math.PI / 2;
-scene.add(floor);
-
-const light = new THREE.DirectionalLight(0xffffff, 1);
-light.position.set(5, 10, 7.5);
-scene.add(light);
-scene.add(new THREE.AmbientLight(0x404040));
-
-// 自プレイヤー
-const playerGroup = new THREE.Group();
-scene.add(playerGroup);
-playerGroup.add(camera);
-camera.position.y = 1.6; // 目線の高さ
-
-// --- Achex 通信設定 ---
-const ws = new WebSocket("wss://achex.ca:4010");
 ws.onopen = () => {
-    ws.send(JSON.stringify({setID: myId, passwd: "pass"}));
-    ws.send(JSON.stringify({joinHub: HUB_NAME}));
-    document.getElementById('status').innerText = "Online: " + myId;
-    spawnItems();
+    document.getElementById('status').innerText = "サーバー接続完了！";
+    document.getElementById('status').style.color = "#0f0";
+    isConnected = true;
+    
+    // Achexのハブ(ルーム)に参加
+    ws.send(JSON.stringify({ "auth": ROOM_NAME }));
 };
 
 ws.onmessage = (e) => {
-    const data = JSON.parse(e.data);
-    if(data.sID && data.sID !== myId) {
-        if(data.type === "move") updateEnemy(data.sID, data.pos, data.rot);
-        if(data.type === "shoot") handleEnemyShoot(data.sID);
-    }
+    try {
+        const msg = JSON.parse(e.data);
+        if (msg.s && msg.s !== MY_ID) {
+            handleNetworkMessage(msg.s, msg.d);
+        }
+    } catch (err) {}
 };
 
-// --- アイテム生成 ---
-function spawnItems() {
-    const types = ['weapon', 'ammo', 'heal'];
-    for(let i=0; i<30; i++) {
-        const type = types[Math.floor(Math.random() * types.length)];
-        const geo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-        const mat = new THREE.MeshPhongMaterial({ color: type === 'weapon' ? 0xff0000 : (type === 'ammo' ? 0xffff00 : 0x00ff00) });
-        const item = new THREE.Mesh(geo, mat);
-        item.position.set(Math.random()*MAP_SIZE - MAP_SIZE/2, 0.25, Math.random()*MAP_SIZE - MAP_SIZE/2);
-        item.userData = { type: type };
-        scene.add(item);
-        items.push(item);
-    }
+function sendMsg(type, data) {
+    if (!isConnected) return;
+    const payload = {
+        to: ROOM_NAME,
+        s: MY_ID,
+        d: { type: type, ...data }
+    };
+    ws.send(JSON.stringify(payload));
 }
 
-// --- 他プレイヤーの描画 ---
-function updateEnemy(id, pos, rot) {
-    if(!players[id]) {
-        const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.5, 1), new THREE.MeshPhongMaterial({color: 0xff4444}));
-        scene.add(mesh);
-        players[id] = mesh;
-    }
-    players[id].position.copy(pos);
-    players[id].rotation.y = rot;
-}
+/**
+ * ゲーム設定と状態管理
+ */
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const MAP_SIZE = 200; // ステージ範囲 200x200
+const SCALE = 4;      // 描画倍率 (800 / 200 = 4)
 
-// --- 操作系 ---
-const keys = {};
-document.addEventListener('keydown', (e) => keys[e.code] = true);
-document.addEventListener('keyup', (e) => keys[e.code] = false);
+// 入力状態
+const keys = { w: false, a: false, s: false, d: false };
+let mouseX = 100, mouseY = 100;
+let isShooting = false;
 
-// マウス移動 (PC)
-document.addEventListener('mousedown', () => {
-    if(document.pointerLockElement !== renderer.domElement) {
-        renderer.domElement.requestPointerLock();
-    } else {
-        shoot();
-    }
+// ゲームデータ
+const players = {};
+const bullets = [];
+const items = [];
+
+// 自分のプレイヤー情報
+let me = {
+    x: Math.random() * MAP_SIZE,
+    y: Math.random() * MAP_SIZE,
+    radius: 3,
+    hp: 100,
+    maxHp: 100,
+    ammo: 20,
+    speed: 0.8,
+    color: '#00ffff',
+    weaponCooldown: 0,
+    dead: false
+};
+
+/**
+ * 入力イベント
+ */
+window.addEventListener('keydown', e => { if(keys.hasOwnProperty(e.key)) keys[e.key] = true; });
+window.addEventListener('keyup', e => { if(keys.hasOwnProperty(e.key)) keys[e.key] = false; });
+canvas.addEventListener('mousemove', e => {
+    const rect = canvas.getBoundingClientRect();
+    // マウス座標を200x200の論理座標に変換
+    mouseX = (e.clientX - rect.left) / SCALE;
+    mouseY = (e.clientY - rect.top) / SCALE;
 });
+canvas.addEventListener('mousedown', () => isShooting = true);
+canvas.addEventListener('mouseup', () => isShooting = false);
 
-document.addEventListener('mousemove', (e) => {
-    if(document.pointerLockElement === renderer.domElement) {
-        playerGroup.rotation.y -= e.movementX * 0.002;
-    }
-});
-
-// タッチ対応 (iPad)
-if ('ontouchstart' in window) {
-    document.getElementById('touch-controls').style.display = 'block';
-    document.getElementById('fire-btn').style.display = 'block';
-    document.getElementById('fire-btn').addEventListener('touchstart', shoot);
-}
-
-// --- メインループ ---
-function animate() {
-    requestAnimationFrame(animate);
-
-    // 移動処理
-    const speed = 0.2;
-    if (keys['KeyW']) playerGroup.translateZ(-speed);
-    if (keys['KeyS']) playerGroup.translateZ(speed);
-    if (keys['KeyA']) playerGroup.translateX(-speed);
-    if (keys['KeyD']) playerGroup.translateX(speed);
-
-    // アイテム取得判定
-    items.forEach((item, index) => {
-        if(playerGroup.position.distanceTo(item.position) < 1.5) {
-            console.log("Picked up:", item.userData.type);
-            scene.remove(item);
-            items.splice(index, 1);
+/**
+ * ネットワークメッセージの処理
+ */
+function handleNetworkMessage(senderId, data) {
+    if (data.type === 'update') {
+        players[senderId] = data;
+    } else if (data.type === 'shoot') {
+        bullets.push({
+            x: data.x, y: data.y, vx: data.vx, vy: data.vy,
+            owner: senderId, life: 60 // 弾の寿命(フレーム)
+        });
+    } else if (data.type === 'hit' && data.target === MY_ID) {
+        if (!me.dead) {
+            me.hp -= 15;
+            if (me.hp <= 0) die();
         }
+    } else if (data.type === 'itemSpawn') {
+        items.push(data.item);
+    } else if (data.type === 'itemPickup') {
+        const idx = items.findIndex(i => i.id === data.itemId);
+        if (idx !== -1) items.splice(idx, 1);
+    }
+}
+
+/**
+ * ゲームロジック
+ */
+function die() {
+    me.dead = true;
+    me.hp = 0;
+    setTimeout(() => {
+        // 3秒後にリスポーン
+        me.dead = false;
+        me.hp = me.maxHp;
+        me.ammo = 20;
+        me.x = Math.random() * MAP_SIZE;
+        me.y = Math.random() * MAP_SIZE;
+    }, 3000);
+}
+
+// アイテムの自動生成（P2Pなので各クライアントが確率で生成し同期する）
+function spawnItemLogic() {
+    if (Math.random() < 0.01 && items.length < 15) {
+        const types = ['heal', 'ammo', 'weapon_upgrade'];
+        const type = types[Math.floor(Math.random() * types.length)];
+        const newItem = {
+            id: Math.random().toString(36).substring(2),
+            x: Math.random() * MAP_SIZE,
+            y: Math.random() * MAP_SIZE,
+            type: type
+        };
+        items.push(newItem);
+        sendMsg('itemSpawn', { item: newItem });
+    }
+}
+
+function update() {
+    if (!me.dead) {
+        // 移動処理
+        let dx = 0, dy = 0;
+        if (keys.w) dy -= me.speed;
+        if (keys.s) dy += me.speed;
+        if (keys.a) dx -= me.speed;
+        if (keys.d) dx += me.speed;
+
+        // 斜め移動の正規化
+        if (dx !== 0 && dy !== 0) {
+            const length = Math.sqrt(dx * dx + dy * dy);
+            dx = (dx / length) * me.speed;
+            dy = (dy / length) * me.speed;
+        }
+
+        me.x += dx;
+        me.y += dy;
+
+        // 200x200の範囲制限
+        me.x = Math.max(me.radius, Math.min(MAP_SIZE - me.radius, me.x));
+        me.y = Math.max(me.radius, Math.min(MAP_SIZE - me.radius, me.y));
+
+        // 射撃処理
+        if (me.weaponCooldown > 0) me.weaponCooldown--;
+        if (isShooting && me.weaponCooldown <= 0 && me.ammo > 0) {
+            const angle = Math.atan2(mouseY - me.y, mouseX - me.x);
+            const speed = 3;
+            const vx = Math.cos(angle) * speed;
+            const vy = Math.sin(angle) * speed;
+            
+            me.ammo--;
+            me.weaponCooldown = 15; // 連射速度
+
+            sendMsg('shoot', { x: me.x, y: me.y, vx: vx, vy: vy });
+        }
+
+        // アイテム取得判定
+        for (let i = items.length - 1; i >= 0; i--) {
+            const item = items[i];
+            const dist = Math.sqrt((me.x - item.x)**2 + (me.y - item.y)**2);
+            if (dist < me.radius + 3) {
+                if (item.type === 'heal') me.hp = Math.min(me.maxHp, me.hp + 40);
+                if (item.type === 'ammo') me.ammo += 30;
+                if (item.type === 'weapon_upgrade') { me.speed = 1.2; me.maxHp = 150; me.hp += 50; }
+                
+                sendMsg('itemPickup', { itemId: item.id });
+                items.splice(i, 1);
+            }
+        }
+    }
+
+    // 弾の移動と衝突判定
+    for (let i = bullets.length - 1; i >= 0; i--) {
+        let b = bullets[i];
+        b.x += b.vx;
+        b.y += b.vy;
+        b.life--;
+
+        // 弾が自分に当たったか判定（他人の弾のみ）
+        if (b.owner !== MY_ID && !me.dead) {
+            const dist = Math.sqrt((me.x - b.x)**2 + (me.y - b.y)**2);
+            if (dist < me.radius + 1) {
+                sendMsg('hit', { target: MY_ID });
+                me.hp -= 15;
+                if (me.hp <= 0) die();
+                bullets.splice(i, 1);
+                continue;
+            }
+        }
+
+        if (b.life <= 0 || b.x < 0 || b.x > MAP_SIZE || b.y < 0 || b.y > MAP_SIZE) {
+            bullets.splice(i, 1);
+        }
+    }
+
+    spawnItemLogic();
+
+    // 状態をサーバーに送信（ネットワーク負荷軽減のため少し間引くのが理想ですが、今回はシンプルに毎フレーム送信）
+    if (Math.random() < 0.5) { 
+        sendMsg('update', { x: me.x, y: me.y, hp: me.hp, dead: me.dead, color: me.color });
+    }
+
+    // UI更新
+    document.getElementById('hpDisplay').innerText = `HP: ${me.hp} / ${me.maxHp}`;
+    document.getElementById('ammoDisplay').innerText = `弾薬: ${me.ammo}`;
+    if(me.dead) document.getElementById('hpDisplay').innerText = "死亡... リスポーン待機中";
+}
+
+/**
+ * 描画処理
+ */
+function draw() {
+    // 描画をSCALE倍に拡大
+    ctx.save();
+    ctx.scale(SCALE, SCALE);
+
+    // 背景クリア
+    ctx.fillStyle = '#333';
+    ctx.fillRect(0, 0, MAP_SIZE, MAP_SIZE);
+
+    // グリッド線 (200x200の範囲をわかりやすくする)
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 0.2;
+    for (let i = 0; i <= MAP_SIZE; i += 10) {
+        ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, MAP_SIZE); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(MAP_SIZE, i); ctx.stroke();
+    }
+
+    // アイテムの描画
+    items.forEach(item => {
+        ctx.beginPath();
+        ctx.arc(item.x, item.y, 2, 0, Math.PI * 2);
+        if (item.type === 'heal') ctx.fillStyle = '#0f0'; // 緑: 回復
+        else if (item.type === 'ammo') ctx.fillStyle = '#ff0'; // 黄: 弾薬
+        else ctx.fillStyle = '#f0f'; // 紫: 武器アップグレード
+        ctx.fill();
     });
 
-    // 位置同期送信 (Achex)
-    if(ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-            toHub: HUB_NAME,
-            type: "move",
-            pos: playerGroup.position,
-            rot: playerGroup.rotation.y
-        }));
+    // 他のプレイヤーの描画
+    for (let id in players) {
+        let p = players[id];
+        if (p.dead) continue;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+        ctx.fillStyle = '#ff4444'; // 敵は赤
+        ctx.fill();
+        
+        // HPバー
+        ctx.fillStyle = '#f00';
+        ctx.fillRect(p.x - 3, p.y - 5, 6, 1);
+        ctx.fillStyle = '#0f0';
+        ctx.fillRect(p.x - 3, p.y - 5, 6 * (p.hp / 100), 1);
     }
 
-    renderer.render(scene, camera);
-}
+    // 自分の描画
+    if (!me.dead) {
+        ctx.beginPath();
+        ctx.arc(me.x, me.y, me.radius, 0, Math.PI * 2);
+        ctx.fillStyle = me.color;
+        ctx.fill();
 
-function shoot() {
-    console.log("Shooting!");
-    // 本来はRaycasterで当たり判定を行う
-    if(ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ toHub: HUB_NAME, type: "shoot" }));
+        // 照準線
+        ctx.beginPath();
+        ctx.moveTo(me.x, me.y);
+        ctx.lineTo(mouseX, mouseY);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
     }
+
+    // 弾の描画
+    ctx.fillStyle = '#fff';
+    bullets.forEach(b => {
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, 1, 0, Math.PI * 2);
+        ctx.fill();
+    });
+
+    ctx.restore();
 }
 
-animate();
+/**
+ * メインループ
+ */
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
 
-// リサイズ対応
-window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-});
+loop();
+
 </script>
 </body>
 </html>
