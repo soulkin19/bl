@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Card Duel Pro - Tactical Edition</title>
+    <title>Card Duel Pro - Advanced</title>
     <style>
-        :root { --primary: #4a90e2; --danger: #e74c3c; --success: #27ae60; --warning: #f1c40f; --bg: #f4f7f9; }
-        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); margin: 0; display: flex; justify-content: center; }
+        :root { --primary: #4a90e2; --danger: #e74c3c; --success: #27ae60; --bg: #f4f7f9; --accent: #f1c40f; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: var(--bg); margin: 0; display: flex; justify-content: center; }
         #app { width: 100%; max-width: 900px; padding: 20px; }
         .hidden { display: none !important; }
 
@@ -16,184 +16,108 @@
         
         .room-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 20px; }
         .room-card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-left: 6px solid var(--primary); }
-        
-        /* 待機室 */
+
+        /* Waiting Room */
+        .waiting-room { background: white; padding: 40px; border-radius: 15px; text-align: center; }
         .player-list { display: flex; justify-content: center; gap: 30px; margin: 30px 0; }
         .player-box { width: 150px; padding: 20px; border: 2px solid #eee; border-radius: 12px; position: relative; }
         .player-box.ready { border-color: var(--success); background: #f0fff4; }
-        .ready-badge { position: absolute; top: -10px; right: -10px; background: var(--success); color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.7rem; }
+        .status-badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 10px; background: #eee; }
 
-        /* ゲーム画面 */
-        #field-container { text-align: center; margin: 40px 0; }
-        #field { font-size: 4rem; width: 120px; height: 120px; line-height: 120px; background: white; border-radius: 50%; display: inline-block; box-shadow: 0 5px 20px rgba(0,0,0,0.1); border: 4px solid var(--primary); }
-        .hand { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
-        .card { width: 55px; height: 80px; border: 2px solid #333; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: bold; cursor: pointer; background: white; transition: 0.2s; }
-        .card.disabled { opacity: 0.3; cursor: not-allowed; }
-        .card:not(.disabled):hover { transform: translateY(-10px); background: var(--warning); }
+        /* Game */
+        #field { font-size: 5rem; margin: 30px auto; color: var(--primary); font-weight: bold; width: 120px; height: 120px; line-height: 120px; background: white; border-radius: 50%; text-align: center; box-shadow: 0 0 20px rgba(0,0,0,0.1); }
+        .hand { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; min-height: 100px; padding: 20px; background: rgba(0,0,0,0.05); border-radius: 10px; }
+        .card { width: 50px; height: 75px; border: 2px solid #2c3e50; border-radius: 8px; background: white; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.4rem; transition: 0.2s; }
+        .card.disabled { opacity: 0.2; cursor: not-allowed; }
+        .card.selecting { border-color: var(--danger); box-shadow: 0 0 10px var(--danger); animation: pulse 1s infinite; }
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
 
         button { padding: 10px 20px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; }
         .btn-primary { background: var(--primary); color: white; }
         .btn-success { background: var(--success); color: white; }
         .btn-danger { background: var(--danger); color: white; }
-        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-ready { background: #9b59b6; color: white; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        
+        .pass-menu { margin-top: 20px; display: flex; justify-content: center; gap: 10px; }
     </style>
 </head>
 <body>
 
 <div id="app">
-    <!-- ロビー -->
+    <!-- Lobby -->
     <div id="view-lobby">
         <div class="config-box">
-            <input type="text" id="user-name" placeholder="ユーザー名" maxlength="10">
-            <button class="btn-success" onclick="matchmaking()">クイックマッチ (自動対戦)</button>
+            <input type="text" id="user-name" placeholder="プレイヤー名">
+            <input type="text" id="room-name" placeholder="部屋名（任意）">
+            <button class="btn-primary" onclick="handleCreateRoom(false)">＋ ルーム作成</button>
+            <button class="btn-success" onclick="joinRandom()">ランダムマッチ開始</button>
         </div>
-        <div class="config-box">
-            <input type="text" id="room-name" placeholder="カスタムルーム名">
-            <button class="btn-primary" onclick="createCustomRoom()">＋ ルーム作成</button>
-        </div>
-        <h2>公開ルーム</h2>
+        <h2>公開ルーム一覧</h2>
         <div id="room-list" class="room-grid"></div>
     </div>
 
-    <!-- 待機室 -->
+    <!-- Waiting Room -->
     <div id="view-waiting" class="hidden">
-        <div style="background:white; padding:40px; border-radius:15px; text-align:center;">
-            <h2 id="wait-room-title">待機中...</h2>
+        <div class="waiting-room">
+            <h2 id="display-room-name">---</h2>
             <div class="player-list">
                 <div id="box-p1" class="player-box">
-                    <span id="badge-p1" class="ready-badge hidden">READY</span>
-                    <strong>P1: <span id="name-p1">...</span></strong>
+                    <strong id="name-p1">待機中...</strong>
+                    <div id="status-p1" class="status-badge">NOT READY</div>
                 </div>
                 <div id="box-p2" class="player-box">
-                    <span id="badge-p2" class="ready-badge hidden">READY</span>
-                    <strong>P2: <span id="name-p2">...</span></strong>
+                    <strong id="name-p2">待機中...</strong>
+                    <div id="status-p2" class="status-badge">NOT READY</div>
                 </div>
             </div>
-            <button id="ready-btn" class="btn-success" onclick="toggleReady()">準備完了</button>
+            <button id="ready-btn" class="btn-ready" onclick="toggleReady()">準備完了</button>
             <button class="btn-danger" onclick="leaveRoom()">退出</button>
         </div>
     </div>
 
-    <!-- ゲーム画面 -->
+    <!-- Game Screen -->
     <div id="view-game" class="hidden">
         <div style="display:flex; justify-content: space-between; align-items:center; background:white; padding:15px; border-radius:10px;">
-            <div id="game-status">準備中...</div>
-            <div id="turn-display" style="font-weight:bold; color:var(--primary);">---</div>
-            <div>山札: <span id="deck-count">0</span> | 相手: <span id="opp-count">0</span>枚</div>
-        </div>
-
-        <div id="field-container">
+            <div id="turn-info">---</div>
             <div id="field">0</div>
-            <p id="game-msg" style="color:#666; height: 20px;"></p>
+            <div style="text-align:right">相手の手札: <span id="opp-count">0</span>枚</div>
         </div>
 
-        <div id="my-hand" class="hand"></div>
+        <div id="pass-options" class="pass-menu hidden">
+            <button class="btn-success" onclick="passAction('draw')">1枚引く(5-15)</button>
+            <button class="btn-danger" onclick="passAction('give')">自分のカードを1枚押し付ける</button>
+        </div>
 
-        <div style="margin-top: 30px; text-align:center; display:flex; justify-content: center; gap:10px;">
-            <button class="btn-primary" style="background:#7f8c8d" onclick="handlePass()">パスして1枚引く (場をリセット)</button>
+        <div id="instruction" style="text-align:center; margin:10px; color:var(--danger); font-weight:bold;"></div>
+        <div id="my-hand" class="hand"></div>
+        
+        <div style="margin-top: 20px; text-align: center;">
+            <button id="pass-btn" class="btn-primary" style="background:#7f8c8d" onclick="showPassMenu()">パス / 特殊アクション</button>
         </div>
     </div>
 </div>
 
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-    import { getDatabase, ref, set, update, onValue, push, get, remove, onDisconnect, runTransaction } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+    import { getDatabase, ref, set, update, onValue, push, get, remove, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
-    // --- Firebase 設定 (ご自身のものに差し替え) ---
     const firebaseConfig = {
         apiKey: "AIzaSyCwhHspaG94goiCIjVj3h-Un5pBK3JTjMU",
         authDomain: "soulkin-aa3b7.firebaseapp.com",
         databaseURL: "https://soulkin-aa3b7-default-rtdb.firebaseio.com",
-        projectId: "soulkin-aa3b7",
-        storageBucket: "soulkin-aa3b7.firebasestorage.app",
-        messagingSenderId: "358331064206",
-        appId: "1:358331064206:web:d7760ea0919259418a4edf"
+        projectId: "soulkin-aa3b7"
     };
 
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
 
-    let myId = Math.random().toString(36).substring(7);
-    let myRole = null; // 'p1' or 'p2'
+    let myRole = null;
     let currentRoomId = null;
     let myName = "";
+    let isSelectingToGive = false;
 
-    // --- 画面管理 ---
-    function showView(viewId) {
-        ['view-lobby', 'view-waiting', 'view-game'].forEach(id => {
-            document.getElementById(id).classList.toggle('hidden', id !== viewId);
-        });
-    }
-
-    // --- マッチメイキング (ランダム対戦) ---
-    window.matchmaking = async () => {
-        myName = document.getElementById('user-name').value || "Player";
-        const queueRef = ref(db, 'matchmaking_queue');
-        
-        // トランザクションでキューを確認
-        const result = await runTransaction(queueRef, (currentData) => {
-            if (currentData) {
-                // 待機者がいたら自分とマッチングさせてキューを空にする
-                return null; 
-            } else {
-                // 誰もいなければ自分を登録
-                return { id: myId, name: myName, time: Date.now() };
-            }
-        });
-
-        if (result.committed && result.snapshot.val() !== null) {
-            // 自分がキューに登録された（待機側）
-            const waitRef = ref(db, `matches/${myId}`);
-            showView('view-waiting');
-            document.getElementById('wait-room-title').innerText = "対戦相手を探しています...";
-            
-            onValue(waitRef, (snap) => {
-                if (snap.exists()) {
-                    currentRoomId = snap.val().roomId;
-                    myRole = 'p1';
-                    listenRoom();
-                }
-            });
-            onDisconnect(waitRef).remove();
-            onDisconnect(queueRef).remove();
-        } else {
-            // 他人がキューにいたのでマッチング成立
-            const opponent = result.snapshot.val();
-            const newRoomId = push(ref(db, 'rooms')).key;
-            currentRoomId = newRoomId;
-            myRole = 'p2';
-            
-            await set(ref(db, `rooms/${newRoomId}`), {
-                roomName: "クイックマッチ",
-                state: 'waiting',
-                p1: { name: opponent.name, ready: false, active: true },
-                p2: { name: myName, ready: false, active: true }
-            });
-            
-            await set(ref(db, `matches/${opponent.id}`), { roomId: newRoomId });
-            listenRoom();
-            showView('view-waiting');
-        }
-    };
-
-    // --- カスタムルーム作成 ---
-    window.createCustomRoom = async () => {
-        myName = document.getElementById('user-name').value || "Host";
-        const roomName = document.getElementById('room-name').value || "カスタム部屋";
-        const newRoomRef = push(ref(db, 'rooms'));
-        currentRoomId = newRoomRef.key;
-        myRole = 'p1';
-
-        await set(newRoomRef, {
-            roomName: roomName,
-            state: 'waiting',
-            p1: { name: myName, ready: false, active: true }
-        });
-        showView('view-waiting');
-        listenRoom();
-    };
-
-    // --- ロビー監視 ---
+    // --- Lobby Logic ---
     onValue(ref(db, 'rooms'), (snapshot) => {
         const rooms = snapshot.val();
         const listEl = document.getElementById('room-list');
@@ -202,50 +126,74 @@
 
         Object.keys(rooms).forEach(id => {
             const room = rooms[id];
-            if (room.state === 'playing') return;
+            if (room.isRandom || room.state === 'playing') return;
+            
             const card = document.createElement('div');
             card.className = 'room-card';
             card.innerHTML = `
                 <h3>${room.roomName}</h3>
-                <p>ホスト: ${room.p1.name} (${room.p2 ? '2/2' : '1/2'})</p>
-                <button class="btn-primary" ${room.p2 ? 'disabled' : ''}>入室</button>
+                <p>プレイヤー: ${room.p1?.name || '-' } vs ${room.p2?.name || '-'}</p>
+                <button class="btn-primary" ${(room.p1 && room.p2) ? 'disabled' : ''} onclick="handleJoinRoom('${id}')">入室</button>
             `;
-            card.onclick = () => { if(!room.p2) joinRoom(id); };
             listEl.appendChild(card);
         });
     });
 
-    async function joinRoom(id) {
-        myName = document.getElementById('user-name').value || "Guest";
-        currentRoomId = id;
-        myRole = 'p2';
-        await update(ref(db, `rooms/${id}/p2`), { name: myName, ready: false, active: true });
+    window.handleCreateRoom = async (isRandom) => {
+        myName = document.getElementById('user-name').value || "Player";
+        const rName = document.getElementById('room-name').value || (isRandom ? "Random Match" : `${myName}'s Room`);
+        const newRoomRef = push(ref(db, 'rooms'));
+        currentRoomId = newRoomRef.key;
+        myRole = 'p1';
+
+        onDisconnect(ref(db, `rooms/${currentRoomId}/p1`)).remove();
+
+        await set(newRoomRef, {
+            roomName: rName,
+            state: 'waiting',
+            isRandom: isRandom,
+            p1: { name: myName, ready: false }
+        });
         showView('view-waiting');
         listenRoom();
-    }
+    };
 
-    // --- 準備システム ---
+    window.handleJoinRoom = async (roomId) => {
+        myName = document.getElementById('user-name').value || "Guest";
+        currentRoomId = roomId;
+        const roomSnap = await get(ref(db, `rooms/${roomId}`));
+        myRole = roomSnap.val().p1 ? 'p2' : 'p1';
+
+        onDisconnect(ref(db, `rooms/${currentRoomId}/${myRole}`)).remove();
+
+        await update(ref(db, `rooms/${currentRoomId}/${myRole}`), { name: myName, ready: false });
+        showView('view-waiting');
+        listenRoom();
+    };
+
+    window.joinRandom = async () => {
+        const snap = await get(ref(db, 'rooms'));
+        const rooms = snap.val();
+        const availableId = rooms ? Object.keys(rooms).find(id => rooms[id].isRandom && rooms[id].state === 'waiting' && (!rooms[id].p1 || !rooms[id].p2)) : null;
+        if (availableId) handleJoinRoom(availableId);
+        else handleCreateRoom(true);
+    };
+
+    // --- Waiting Room Logic ---
     window.toggleReady = async () => {
-        const readyRef = ref(db, `rooms/${currentRoomId}/${myRole}/ready`);
-        const snap = await get(readyRef);
-        await set(readyRef, !snap.val());
+        const snap = await get(ref(db, `rooms/${currentRoomId}/${myRole}/ready`));
+        await update(ref(db, `rooms/${currentRoomId}/${myRole}`), { ready: !snap.val() });
     };
 
     function listenRoom() {
-        const roomRef = ref(db, `rooms/${currentRoomId}`);
-        onValue(roomRef, (snap) => {
-            const room = snap.val();
-            if (!room) return;
+        onValue(ref(db, `rooms/${currentRoomId}`), (snapshot) => {
+            const room = snapshot.val();
+            if (!room) { location.reload(); return; }
 
-            // 待機画面の更新
-            document.getElementById('name-p1').innerText = room.p1?.name || "離脱中";
-            document.getElementById('name-p2').innerText = room.p2?.name || "待機中...";
-            document.getElementById('badge-p1').classList.toggle('hidden', !room.p1?.ready);
-            document.getElementById('badge-p2').classList.toggle('hidden', !room.p2?.ready);
-            
-            // 全員Readyなら開始 (P1が代表して初期化)
-            if (room.state === 'waiting' && room.p1?.ready && room.p2?.ready) {
-                if (myRole === 'p1') initGame();
+            updateWaitingUI(room);
+
+            if (room.p1?.ready && room.p2?.ready && room.state !== 'playing') {
+                if (myRole === 'p1') initGame(); // 片方が初期化
             }
 
             if (room.state === 'playing') {
@@ -255,108 +203,134 @@
         });
     }
 
-    // --- ゲームロジック ---
-    async function initGame() {
-        // 1-10 のカードを各4枚ずつ (計40枚)
-        let deck = [];
-        for(let i=1; i<=10; i++) deck.push(i,i,i,i);
-        deck.sort(() => Math.random() - 0.5);
+    function updateWaitingUI(room) {
+        document.getElementById('display-room-name').innerText = room.roomName;
+        ['p1', 'p2'].forEach(p => {
+            const data = room[p];
+            const box = document.getElementById(`box-${p}`);
+            const nameEl = document.getElementById(`name-${p}`);
+            const statusEl = document.getElementById(`status-${p}`);
+            
+            if (data) {
+                nameEl.innerText = data.name;
+                statusEl.innerText = data.ready ? "READY" : "NOT READY";
+                box.classList.toggle('ready', data.ready);
+            } else {
+                nameEl.innerText = "待機中...";
+                statusEl.innerText = "WAITING";
+                box.classList.remove('ready');
+            }
+        });
+        const readyBtn = document.getElementById('ready-btn');
+        readyBtn.innerText = room[myRole]?.ready ? "準備解除" : "準備完了";
+    }
 
+    // --- Game Logic ---
+    async function initGame() {
+        const deck = Array.from({length: 15}, (_, i) => [i+1, i+1]).flat().sort(() => Math.random() - 0.5);
         await update(ref(db, `rooms/${currentRoomId}`), {
             state: 'playing',
-            deck: deck.slice(14),
-            p1: { ... (await get(ref(db, `rooms/${currentRoomId}/p1`))).val(), hand: deck.slice(0, 7), count: 7 },
-            p2: { ... (await get(ref(db, `rooms/${currentRoomId}/p2`))).val(), hand: deck.slice(7, 14), count: 7 },
+            'p1/hand': deck.slice(0, 10), 'p1/count': 10, 'p1/ready': false,
+            'p2/hand': deck.slice(10, 20), 'p2/count': 20, 'p2/ready': false,
             lastCard: 0,
-            turn: 'p1',
-            msg: "ゲーム開始！"
+            turn: 'p1'
         });
     }
 
     function renderGame(room) {
         const isMyTurn = room.turn === myRole;
-        const oppRole = myRole === 'p1' ? 'p2' : 'p1';
+        const opp = myRole === 'p1' ? 'p2' : 'p1';
         
-        document.getElementById('game-status').innerText = `${room.p1.name} vs ${room.p2.name}`;
-        document.getElementById('turn-display').innerText = isMyTurn ? "★ あなたのターン" : "相手の思考中...";
-        document.getElementById('field').innerText = room.lastCard || "START";
-        document.getElementById('opp-count').innerText = room[oppRole].count;
-        document.getElementById('deck-count').innerText = room.deck ? room.deck.length : 0;
-        document.getElementById('game-msg').innerText = room.msg || "";
+        document.getElementById('turn-info').innerText = isMyTurn ? "🔥 あなたのターン" : "💤 相手のターン";
+        document.getElementById('field').innerText = room.lastCard || '始';
+        document.getElementById('opp-count').innerText = room[opp].count;
+        document.getElementById('pass-btn').disabled = !isMyTurn;
 
         const handEl = document.getElementById('my-hand');
         handEl.innerHTML = '';
-        
         const myHand = room[myRole].hand || [];
+        
         myHand.sort((a,b)=>a-b).forEach(num => {
             const card = document.createElement('div');
-            // ルール: 場より大きい数字、または同じ数字(バースト)が出せる
-            const canPlay = isMyTurn && (num >= room.lastCard || room.lastCard === 0);
-            card.className = `card ${canPlay ? '' : 'disabled'}`;
+            const canPlay = isMyTurn && !isSelectingToGive && num > room.lastCard;
+            card.className = `card ${canPlay || isSelectingToGive ? '' : 'disabled'} ${isSelectingToGive ? 'selecting' : ''}`;
             card.innerText = num;
-            if (canPlay) card.onclick = () => playCard(num, myHand, room);
+            card.onclick = () => {
+                if (isSelectingToGive) giveCard(num, myHand);
+                else if (canPlay) playCard(num, myHand);
+            };
             handEl.appendChild(card);
         });
 
-        // 勝利判定
-        if (room[myRole].count === 0) {
-            alert("あなたの勝利です！");
-            location.reload();
-        } else if (room[oppRole].count === 0) {
-            alert("敗北...");
-            location.reload();
-        }
+        if (room[myRole].count === 0) { alert("YOU WIN!"); location.reload(); }
+        else if (room[opp].count === 0) { alert("YOU LOSE..."); location.reload(); }
     }
 
-    async function playCard(num, hand, room) {
+    async function playCard(num, hand) {
         const newHand = [...hand];
         newHand.splice(newHand.indexOf(num), 1);
-        
-        let nextTurn = myRole === 'p1' ? 'p2' : 'p1';
-        let lastCard = num;
-        let msg = `${num} が出されました`;
-
-        // 特殊ルール: ジャストマッチ (同じ数字なら場をリセットしてもう一度自分のターン)
-        if (num === room.lastCard && num !== 0) {
-            lastCard = 0;
-            nextTurn = myRole;
-            msg = `JAST MATCH! 場がリセットされ、もう一度あなたの番です！`;
-        }
-
         await update(ref(db, `rooms/${currentRoomId}`), {
-            lastCard: lastCard,
-            turn: nextTurn,
-            msg: msg,
+            lastCard: num,
+            turn: myRole === 'p1' ? 'p2' : 'p1',
             [`${myRole}/hand`]: newHand,
             [`${myRole}/count`]: newHand.length
         });
     }
 
-    window.handlePass = async () => {
+    // --- New Pass Actions ---
+    window.showPassMenu = () => {
+        document.getElementById('pass-options').classList.toggle('hidden');
+    };
+
+    window.passAction = async (type) => {
+        document.getElementById('pass-options').classList.add('hidden');
         const snap = await get(ref(db, `rooms/${currentRoomId}`));
         const room = snap.val();
         if (room.turn !== myRole) return;
 
-        let deck = room.deck || [];
-        let myHand = room[myRole].hand || [];
-        
-        // 山札から1枚引く
-        if (deck.length > 0) {
-            myHand.push(deck.shift());
+        if (type === 'draw') {
+            const newCard = Math.floor(Math.random() * 11) + 5;
+            const newHand = [...(room[myRole].hand || []), newCard];
+            await update(ref(db, `rooms/${currentRoomId}`), {
+                lastCard: 0,
+                turn: myRole === 'p1' ? 'p2' : 'p1',
+                [`${myRole}/hand`]: newHand,
+                [`${myRole}/count`]: newHand.length
+            });
+            alert(`カードを引きました: ${newCard}`);
+        } else if (type === 'give') {
+            isSelectingToGive = true;
+            document.getElementById('instruction').innerText = "相手に渡すカードを選んでください";
+            renderGame(room);
         }
+    };
+
+    async function giveCard(num, hand) {
+        isSelectingToGive = false;
+        document.getElementById('instruction').innerText = "";
+        const opp = myRole === 'p1' ? 'p2' : 'p1';
+        const snap = await get(ref(db, `rooms/${currentRoomId}`));
+        const room = snap.val();
+
+        const myNewHand = [...hand];
+        myNewHand.splice(myNewHand.indexOf(num), 1);
+        const oppNewHand = [...(room[opp].hand || []), num];
 
         await update(ref(db, `rooms/${currentRoomId}`), {
             lastCard: 0,
-            deck: deck,
             turn: myRole === 'p1' ? 'p2' : 'p1',
-            msg: "パス：場がリセットされ、1枚ドローしました",
-            [`${myRole}/hand`]: myHand,
-            [`${myRole}/count`]: myHand.length
+            [`${myRole}/hand`]: myNewHand,
+            [`${myRole}/count`]: myNewHand.length,
+            [`${opp}/hand`]: oppNewHand,
+            [`${opp}/count`]: oppNewHand.length
         });
-    };
+        alert(`相手に ${num} を渡しました！`);
+    }
 
-    window.leaveRoom = () => location.reload();
-
+    window.leaveRoom = () => { location.reload(); };
+    function showView(id) {
+        ['view-lobby', 'view-waiting', 'view-game'].forEach(v => document.getElementById(v).classList.toggle('hidden', v !== id));
+    }
 </script>
 </body>
 </html>
