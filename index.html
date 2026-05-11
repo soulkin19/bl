@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Card Duel Pro - Advanced</title>
+    <title>Card Duel Pro - Reusable</title>
     <style>
         :root { --primary: #4a90e2; --danger: #e74c3c; --success: #27ae60; --bg: #f4f7f9; --accent: #f1c40f; }
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: var(--bg); margin: 0; display: flex; justify-content: center; }
@@ -86,7 +86,7 @@
 
         <div id="pass-options" class="pass-menu hidden">
             <button class="btn-success" onclick="passAction('draw')">1枚引く(5-15)</button>
-            <button class="btn-danger" onclick="passAction('give')">自分のカードを1枚押し付ける</button>
+            <button class="btn-danger" onclick="passAction('give')" id="give-btn">カードを1枚押し付ける</button>
         </div>
 
         <div id="instruction" style="text-align:center; margin:10px; color:var(--danger); font-weight:bold;"></div>
@@ -102,6 +102,7 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
     import { getDatabase, ref, set, update, onValue, push, get, remove, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
+    // 設定は前回と同じ
     const firebaseConfig = {
         apiKey: "AIzaSyCwhHspaG94goiCIjVj3h-Un5pBK3JTjMU",
         authDomain: "soulkin-aa3b7.firebaseapp.com",
@@ -116,8 +117,9 @@
     let currentRoomId = null;
     let myName = "";
     let isSelectingToGive = false;
+    let gameEnded = false; // 二重処理防止用
 
-    // --- Lobby Logic ---
+    // --- Lobby & Room Management ---
     onValue(ref(db, 'rooms'), (snapshot) => {
         const rooms = snapshot.val();
         const listEl = document.getElementById('room-list');
@@ -127,14 +129,9 @@
         Object.keys(rooms).forEach(id => {
             const room = rooms[id];
             if (room.isRandom || room.state === 'playing') return;
-            
             const card = document.createElement('div');
             card.className = 'room-card';
-            card.innerHTML = `
-                <h3>${room.roomName}</h3>
-                <p>プレイヤー: ${room.p1?.name || '-' } vs ${room.p2?.name || '-'}</p>
-                <button class="btn-primary" ${(room.p1 && room.p2) ? 'disabled' : ''} onclick="handleJoinRoom('${id}')">入室</button>
-            `;
+            card.innerHTML = `<h3>${room.roomName}</h3><p>プレイヤー: ${room.p1?.name || '-' } vs ${room.p2?.name || '-'}</p><button class="btn-primary" ${(room.p1 && room.p2) ? 'disabled' : ''} onclick="handleJoinRoom('${id}')">入室</button>`;
             listEl.appendChild(card);
         });
     });
@@ -145,15 +142,8 @@
         const newRoomRef = push(ref(db, 'rooms'));
         currentRoomId = newRoomRef.key;
         myRole = 'p1';
-
         onDisconnect(ref(db, `rooms/${currentRoomId}/p1`)).remove();
-
-        await set(newRoomRef, {
-            roomName: rName,
-            state: 'waiting',
-            isRandom: isRandom,
-            p1: { name: myName, ready: false }
-        });
+        await set(newRoomRef, { roomName: rName, state: 'waiting', isRandom: isRandom, p1: { name: myName, ready: false } });
         showView('view-waiting');
         listenRoom();
     };
@@ -163,9 +153,7 @@
         currentRoomId = roomId;
         const roomSnap = await get(ref(db, `rooms/${roomId}`));
         myRole = roomSnap.val().p1 ? 'p2' : 'p1';
-
         onDisconnect(ref(db, `rooms/${currentRoomId}/${myRole}`)).remove();
-
         await update(ref(db, `rooms/${currentRoomId}/${myRole}`), { name: myName, ready: false });
         showView('view-waiting');
         listenRoom();
@@ -179,7 +167,7 @@
         else handleCreateRoom(true);
     };
 
-    // --- Waiting Room Logic ---
+    // --- Waiting & Reusable Logic ---
     window.toggleReady = async () => {
         const snap = await get(ref(db, `rooms/${currentRoomId}/${myRole}/ready`));
         await update(ref(db, `rooms/${currentRoomId}/${myRole}`), { ready: !snap.val() });
@@ -190,61 +178,72 @@
             const room = snapshot.val();
             if (!room) { location.reload(); return; }
 
-            updateWaitingUI(room);
-
-            if (room.p1?.ready && room.p2?.ready && room.state !== 'playing') {
-                if (myRole === 'p1') initGame(); // 片方が初期化
-            }
-
-            if (room.state === 'playing') {
+            if (room.state === 'waiting') {
+                gameEnded = false;
+                showView('view-waiting');
+                updateWaitingUI(room);
+                if (room.p1?.ready && room.p2?.ready) {
+                    if (myRole === 'p1') initGame();
+                }
+            } else if (room.state === 'playing') {
                 showView('view-game');
                 renderGame(room);
             }
         });
     }
 
-    function updateWaitingUI(room) {
-        document.getElementById('display-room-name').innerText = room.roomName;
-        ['p1', 'p2'].forEach(p => {
-            const data = room[p];
-            const box = document.getElementById(`box-${p}`);
-            const nameEl = document.getElementById(`name-${p}`);
-            const statusEl = document.getElementById(`status-${p}`);
-            
-            if (data) {
-                nameEl.innerText = data.name;
-                statusEl.innerText = data.ready ? "READY" : "NOT READY";
-                box.classList.toggle('ready', data.ready);
-            } else {
-                nameEl.innerText = "待機中...";
-                statusEl.innerText = "WAITING";
-                box.classList.remove('ready');
-            }
-        });
-        const readyBtn = document.getElementById('ready-btn');
-        readyBtn.innerText = room[myRole]?.ready ? "準備解除" : "準備完了";
-    }
-
-    // --- Game Logic ---
     async function initGame() {
         const deck = Array.from({length: 15}, (_, i) => [i+1, i+1]).flat().sort(() => Math.random() - 0.5);
         await update(ref(db, `rooms/${currentRoomId}`), {
             state: 'playing',
             'p1/hand': deck.slice(0, 10), 'p1/count': 10, 'p1/ready': false,
-            'p2/hand': deck.slice(10, 20), 'p2/count': 20, 'p2/ready': false,
+            'p2/hand': deck.slice(10, 20), 'p2/count': 10, 'p2/ready': false, // 合計20枚を10/10分配
             lastCard: 0,
             turn: 'p1'
         });
     }
 
+    async function resetRoom(winnerName) {
+        if (gameEnded) return;
+        gameEnded = true;
+        alert(`終局！ 勝者: ${winnerName}\n待機室に戻ります。`);
+        
+        // ルームを初期状態に戻す（プレイヤー名は維持）
+        await update(ref(db, `rooms/${currentRoomId}`), {
+            state: 'waiting',
+            lastCard: 0,
+            'p1/ready': false,
+            'p1/hand': [],
+            'p1/count': 0,
+            'p2/ready': false,
+            'p2/hand': [],
+            'p2/count': 0
+        });
+    }
+
+    // --- Game Logic ---
     function renderGame(room) {
         const isMyTurn = room.turn === myRole;
         const opp = myRole === 'p1' ? 'p2' : 'p1';
         
+        // 勝利判定
+        if (room[myRole].count === 0) { resetRoom(room[myRole].name); return; }
+        if (room[opp].count === 0) { resetRoom(room[opp].name); return; }
+
         document.getElementById('turn-info').innerText = isMyTurn ? "🔥 あなたのターン" : "💤 相手のターン";
         document.getElementById('field').innerText = room.lastCard || '始';
         document.getElementById('opp-count').innerText = room[opp].count;
         document.getElementById('pass-btn').disabled = !isMyTurn;
+
+        // 押し付けボタンの制御
+        const giveBtn = document.getElementById('give-btn');
+        if (room[myRole].count <= 5) {
+            giveBtn.disabled = true;
+            giveBtn.innerText = "押し付け不可 (手札5以下)";
+        } else {
+            giveBtn.disabled = false;
+            giveBtn.innerText = "カードを1枚押し付ける";
+        }
 
         const handEl = document.getElementById('my-hand');
         handEl.innerHTML = '';
@@ -261,44 +260,32 @@
             };
             handEl.appendChild(card);
         });
-
-        if (room[myRole].count === 0) { alert("YOU WIN!"); location.reload(); }
-        else if (room[opp].count === 0) { alert("YOU LOSE..."); location.reload(); }
     }
 
-    async function playCard(num, hand) {
-        const newHand = [...hand];
-        newHand.splice(newHand.indexOf(num), 1);
-        await update(ref(db, `rooms/${currentRoomId}`), {
-            lastCard: num,
-            turn: myRole === 'p1' ? 'p2' : 'p1',
-            [`${myRole}/hand`]: newHand,
-            [`${myRole}/count`]: newHand.length
-        });
-    }
-
-    // --- New Pass Actions ---
+    // --- Pass Actions & Give Logic ---
     window.showPassMenu = () => {
         document.getElementById('pass-options').classList.toggle('hidden');
     };
 
     window.passAction = async (type) => {
-        document.getElementById('pass-options').classList.add('hidden');
         const snap = await get(ref(db, `rooms/${currentRoomId}`));
         const room = snap.val();
         if (room.turn !== myRole) return;
+
+        document.getElementById('pass-options').classList.add('hidden');
 
         if (type === 'draw') {
             const newCard = Math.floor(Math.random() * 11) + 5;
             const newHand = [...(room[myRole].hand || []), newCard];
             await update(ref(db, `rooms/${currentRoomId}`), {
-                lastCard: 0,
-                turn: myRole === 'p1' ? 'p2' : 'p1',
-                [`${myRole}/hand`]: newHand,
-                [`${myRole}/count`]: newHand.length
+                lastCard: 0, turn: myRole === 'p1' ? 'p2' : 'p1',
+                [`${myRole}/hand`]: newHand, [`${myRole}/count`]: newHand.length
             });
-            alert(`カードを引きました: ${newCard}`);
         } else if (type === 'give') {
+            if (room[myRole].count <= 5) {
+                alert("手札が5枚以下の時は押し付けられません！");
+                return;
+            }
             isSelectingToGive = true;
             document.getElementById('instruction').innerText = "相手に渡すカードを選んでください";
             renderGame(room);
@@ -317,17 +304,43 @@
         const oppNewHand = [...(room[opp].hand || []), num];
 
         await update(ref(db, `rooms/${currentRoomId}`), {
-            lastCard: 0,
-            turn: myRole === 'p1' ? 'p2' : 'p1',
-            [`${myRole}/hand`]: myNewHand,
-            [`${myRole}/count`]: myNewHand.length,
-            [`${opp}/hand`]: oppNewHand,
-            [`${opp}/count`]: oppNewHand.length
+            lastCard: 0, turn: myRole === 'p1' ? 'p2' : 'p1',
+            [`${myRole}/hand`]: myNewHand, [`${myRole}/count`]: myNewHand.length,
+            [`${opp}/hand`]: oppNewHand, [`${opp}/count`]: oppNewHand.length
         });
-        alert(`相手に ${num} を渡しました！`);
     }
 
-    window.leaveRoom = () => { location.reload(); };
+    // --- UI Helpers ---
+    function updateWaitingUI(room) {
+        document.getElementById('display-room-name').innerText = room.roomName;
+        ['p1', 'p2'].forEach(p => {
+            const data = room[p];
+            const box = document.getElementById(`box-${p}`);
+            const nameEl = document.getElementById(`name-${p}`);
+            const statusEl = document.getElementById(`status-${p}`);
+            if (data && data.name) {
+                nameEl.innerText = data.name;
+                statusEl.innerText = data.ready ? "READY" : "NOT READY";
+                box.classList.toggle('ready', data.ready);
+            } else {
+                nameEl.innerText = "待機中...";
+                statusEl.innerText = "WAITING";
+                box.classList.remove('ready');
+            }
+        });
+        document.getElementById('ready-btn').innerText = room[myRole]?.ready ? "準備解除" : "準備完了";
+    }
+
+    window.playCard = async (num, hand) => {
+        const newHand = [...hand];
+        newHand.splice(newHand.indexOf(num), 1);
+        await update(ref(db, `rooms/${currentRoomId}`), {
+            lastCard: num, turn: myRole === 'p1' ? 'p2' : 'p1',
+            [`${myRole}/hand`]: newHand, [`${myRole}/count`]: newHand.length
+        });
+    };
+
+    window.leaveRoom = () => location.reload();
     function showView(id) {
         ['view-lobby', 'view-waiting', 'view-game'].forEach(v => document.getElementById(v).classList.toggle('hidden', v !== id));
     }
