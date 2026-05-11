@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>3D PvP Survival - Achex</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        #ui { position: absolute; top: 10px; left: 10px; color: white; pointer-events: none; }
+        #crosshair { position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; border: 2px solid white; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; }
+        /* iPad用の簡易ジョイスティックエリア */
+        #touch-controls { position: absolute; bottom: 20px; left: 20px; width: 100px; height: 100px; background: rgba(255,255,255,0.2); border-radius: 50%; display: none; }
+        #fire-btn { position: absolute; bottom: 40px; right: 40px; width: 80px; height: 80px; background: rgba(255,0,0,0.5); border-radius: 50%; display: none; text-align: center; line-height: 80px; color: white; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div id="ui">
+    <div>HP: <span id="hp">100</span> | Ammo: <span id="ammo">30</span></div>
+    <div id="status">Connecting to Achex...</div>
+</div>
+<div id="crosshair"></div>
+<div id="touch-controls"></div>
+<div id="fire-btn">FIRE</div>
+
+<!-- Three.js & Achex Client -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<script>
+// --- 設定 ---
+const MAP_SIZE = 200;
+const HUB_NAME = "my_super_pvp_game_1234"; // ユニークな名前に変更してください
+const myId = "player_" + Math.floor(Math.random() * 1000);
+let players = {};
+let items = [];
+
+// --- Three.js セットアップ ---
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb); // 空の色
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// 地面
+const gridHelper = new THREE.GridHelper(MAP_SIZE, 20);
+scene.add(gridHelper);
+const floorGeom = new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE);
+const floorMat = new THREE.MeshPhongMaterial({ color: 0x44aa44 });
+const floor = new THREE.Mesh(floorGeom, floorMat);
+floor.rotation.x = -Math.PI / 2;
+scene.add(floor);
+
+const light = new THREE.DirectionalLight(0xffffff, 1);
+light.position.set(5, 10, 7.5);
+scene.add(light);
+scene.add(new THREE.AmbientLight(0x404040));
+
+// 自プレイヤー
+const playerGroup = new THREE.Group();
+scene.add(playerGroup);
+playerGroup.add(camera);
+camera.position.y = 1.6; // 目線の高さ
+
+// --- Achex 通信設定 ---
+const ws = new WebSocket("wss://achex.ca:4010");
+ws.onopen = () => {
+    ws.send(JSON.stringify({setID: myId, passwd: "pass"}));
+    ws.send(JSON.stringify({joinHub: HUB_NAME}));
+    document.getElementById('status').innerText = "Online: " + myId;
+    spawnItems();
+};
+
+ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if(data.sID && data.sID !== myId) {
+        if(data.type === "move") updateEnemy(data.sID, data.pos, data.rot);
+        if(data.type === "shoot") handleEnemyShoot(data.sID);
+    }
+};
+
+// --- アイテム生成 ---
+function spawnItems() {
+    const types = ['weapon', 'ammo', 'heal'];
+    for(let i=0; i<30; i++) {
+        const type = types[Math.floor(Math.random() * types.length)];
+        const geo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+        const mat = new THREE.MeshPhongMaterial({ color: type === 'weapon' ? 0xff0000 : (type === 'ammo' ? 0xffff00 : 0x00ff00) });
+        const item = new THREE.Mesh(geo, mat);
+        item.position.set(Math.random()*MAP_SIZE - MAP_SIZE/2, 0.25, Math.random()*MAP_SIZE - MAP_SIZE/2);
+        item.userData = { type: type };
+        scene.add(item);
+        items.push(item);
+    }
+}
+
+// --- 他プレイヤーの描画 ---
+function updateEnemy(id, pos, rot) {
+    if(!players[id]) {
+        const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.5, 1), new THREE.MeshPhongMaterial({color: 0xff4444}));
+        scene.add(mesh);
+        players[id] = mesh;
+    }
+    players[id].position.copy(pos);
+    players[id].rotation.y = rot;
+}
+
+// --- 操作系 ---
+const keys = {};
+document.addEventListener('keydown', (e) => keys[e.code] = true);
+document.addEventListener('keyup', (e) => keys[e.code] = false);
+
+// マウス移動 (PC)
+document.addEventListener('mousedown', () => {
+    if(document.pointerLockElement !== renderer.domElement) {
+        renderer.domElement.requestPointerLock();
+    } else {
+        shoot();
+    }
+});
+
+document.addEventListener('mousemove', (e) => {
+    if(document.pointerLockElement === renderer.domElement) {
+        playerGroup.rotation.y -= e.movementX * 0.002;
+    }
+});
+
+// タッチ対応 (iPad)
+if ('ontouchstart' in window) {
+    document.getElementById('touch-controls').style.display = 'block';
+    document.getElementById('fire-btn').style.display = 'block';
+    document.getElementById('fire-btn').addEventListener('touchstart', shoot);
+}
+
+// --- メインループ ---
+function animate() {
+    requestAnimationFrame(animate);
+
+    // 移動処理
+    const speed = 0.2;
+    if (keys['KeyW']) playerGroup.translateZ(-speed);
+    if (keys['KeyS']) playerGroup.translateZ(speed);
+    if (keys['KeyA']) playerGroup.translateX(-speed);
+    if (keys['KeyD']) playerGroup.translateX(speed);
+
+    // アイテム取得判定
+    items.forEach((item, index) => {
+        if(playerGroup.position.distanceTo(item.position) < 1.5) {
+            console.log("Picked up:", item.userData.type);
+            scene.remove(item);
+            items.splice(index, 1);
+        }
+    });
+
+    // 位置同期送信 (Achex)
+    if(ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            toHub: HUB_NAME,
+            type: "move",
+            pos: playerGroup.position,
+            rot: playerGroup.rotation.y
+        }));
+    }
+
+    renderer.render(scene, camera);
+}
+
+function shoot() {
+    console.log("Shooting!");
+    // 本来はRaycasterで当たり判定を行う
+    if(ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ toHub: HUB_NAME, type: "shoot" }));
+    }
+}
+
+animate();
+
+// リサイズ対応
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
